@@ -63,3 +63,33 @@ def test_fingerprint_rejects_ambiguous_state(state):
 
     with pytest.raises(TypeError, match="JSON"):
         fingerprint(state)
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"max_attempts": True},
+        {"max_attempts": 0},
+        {"interval_seconds": 0},
+        {"backoff_rate": float("inf")},
+        {"timeout_seconds": -1},
+        {"preemptible": 1},
+    ],
+)
+def test_step_options_reject_invalid_values(options):
+    from dbos_langgraph import StepOptions
+
+    with pytest.raises(ValueError):
+        StepOptions(**options)
+
+
+def test_workflow_nodes_cannot_take_leaf_step_options():
+    from dbos_langgraph import StepOptions
+
+    async def node(state):
+        return {}
+
+    with pytest.raises(ValueError, match="configure their own"):
+        DBOSLangGraphPlugin("policy-validation").add_node(
+            StateGraph(dict), "node", node, execute_in="workflow", step_options=StepOptions()
+        )

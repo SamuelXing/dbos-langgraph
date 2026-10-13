@@ -80,6 +80,9 @@ and application versions must be managed by the application.
 Committed results are reused; unfinished operations may run again. External writes
 need idempotency or appropriate transactions. Exactly-once external effects are not promised.
 
+See [node failures and cancellation](docs/failures.md) for leaf-node retry,
+timeout, and cancellation options.
+
 ## Supported scope
 
 Explicit async, single-state-argument nodes returning dict updates; native reducers;

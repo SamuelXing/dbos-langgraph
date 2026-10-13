@@ -96,3 +96,23 @@ Application versions are isolated per test. The result applies to competing
 requests for a dead worker's history, not recovery of a worker that is still alive,
 network partitions, rolling deployment, or a general exactly-once side-effect claim.
 No library code or stored history format changed in this milestone.
+
+## Leaf failures and step options
+
+The full suite passed 39 tests on PostgreSQL in 115.70 seconds. SQLite passed
+38 tests in 120.09 seconds, with the competing-worker case skipped. Ruff lint,
+format checks, strict mypy, distribution builds, and importing StepOptions from
+the installed wheel outside the checkout passed.
+
+Five new execution cases use the real adapter and SDK: a transient failure succeeds
+on attempt three; a plain error executes once; exhausted retries execute three
+times; a timeout exits the async body; recursive cancellation stops a preemptible
+leaf and leaves the root CANCELLED. Reading each terminal handle again returns the
+same result or error without extra body attempts. Seven validation tests reject
+invalid options and options supplied to workflow-mode nodes.
+
+This establishes the leaf policies described in docs/failures.md. It does not
+cover process crashes during backoff, sibling failure in a parallel superstep,
+resume after cancellation, blocking tools, or cancellation-suppressing code.
+The default policy retains the previous one-attempt, non-preemptible behavior.
+There is no new retry loop or history-format change in the adapter.

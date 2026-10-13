@@ -2,6 +2,10 @@
 
 ## 0.1.0a2 (unreleased)
 
+- Add StepOptions for leaf retry attempts, backoff, timeout, and preemption.
+- Test ordinary failures, successful/exhausted retries, timeouts, and recursive
+  cancellation through the SDK.
+
 - Test recovery through successive loop boundaries and competing recovery requests
   from distinct PostgreSQL workers.
 

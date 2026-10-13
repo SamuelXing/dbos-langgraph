@@ -9,6 +9,7 @@ from typing import Any, Literal, TypedDict
 from dbos import DBOS
 from langgraph.graph import StateGraph
 
+from ._policy import StepOptions
 from ._state import fingerprint
 
 Node = Callable[[Any], Awaitable[dict[str, Any]]]
@@ -66,6 +67,7 @@ class DBOSLangGraphPlugin:
         function: Node,
         *,
         execute_in: ExecutionMode = "step",
+        step_options: StepOptions | None = None,
     ) -> "DBOSLangGraphPlugin":
         if self._compiled:
             raise ValueError("register nodes before compiling")
@@ -76,6 +78,11 @@ class DBOSLangGraphPlugin:
             raise ValueError(f"duplicate node: {name}")
         if execute_in not in ("step", "workflow"):
             raise ValueError("execute_in must be step or workflow")
+        if step_options is not None and not isinstance(step_options, StepOptions):
+            raise TypeError("step_options must be StepOptions")
+        if execute_in == "workflow" and step_options is not None:
+            raise ValueError("workflow-mode nodes configure their own DBOS steps")
+        options = step_options or StepOptions()
         if not inspect.iscoroutinefunction(function):
             raise TypeError("async nodes are required")
         parameters = list(inspect.signature(function).parameters.values())
@@ -93,7 +100,15 @@ class DBOSLangGraphPlugin:
             return result
 
         durable_leaf = (
-            DBOS.step(name=f"dbos_langgraph.{self.name}.{name}.step")(leaf)
+            DBOS.step(
+                name=f"dbos_langgraph.{self.name}.{name}.step",
+                retries_allowed=options.max_attempts > 1,
+                max_attempts=options.max_attempts,
+                interval_seconds=options.interval_seconds,
+                backoff_rate=options.backoff_rate,
+                preemptible=options.preemptible,
+                timeout_seconds=options.timeout_seconds,
+            )(leaf)
             if execute_in == "step"
             else leaf
         )
