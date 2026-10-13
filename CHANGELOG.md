@@ -2,6 +2,9 @@
 
 ## 0.1.0a2 (unreleased)
 
+- Test recovery through successive loop boundaries and competing recovery requests
+  from distinct PostgreSQL workers.
+
 - Exercise three consecutive worker crashes under seeded completion delays for
   cycles and Send fan-out.
 

@@ -42,5 +42,9 @@ result format; use 0.1.0a1 to recover histories created by 0.1.0a1.
 
 The recovery tests exercise cycles, joins, Send fan-out, and isolated multistep
 nodes. A separate fault case reverses Send order after a crash and checks that
-recovery reports a mismatch. Concurrent recovery, rolling upgrades, and database
-outages still need dedicated tests.
+recovery reports a mismatch.
+
+A PostgreSQL test covers competing recovery requests for a dead worker's history.
+It uses distinct executor IDs and the SDK's internal recovery-service hook in the
+test harness; the installed adapter does not call that hook. Recovery while an old
+worker is still running, rolling upgrades, and database outages remain untested.

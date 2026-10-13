@@ -5,7 +5,6 @@ import json
 import os
 import subprocess
 import sys
-import time
 import uuid
 from collections import Counter
 
@@ -13,29 +12,7 @@ import pytest
 
 from tests.support.engine import execute
 from tests.support.example import GRAPH, initial
-
-
-def read_counts(path):
-    if not path.exists():
-        return Counter()
-    # The writer may be between write() and flush() while we poll.
-    lines = path.read_text().splitlines(keepends=True)
-    return Counter(json.loads(line)["key"] for line in lines if line.endswith("\n"))
-
-
-def kill_at_boundary(command, env, log_path, ready, audit, block_key, previous_count):
-    with log_path.open("w") as log:
-        process = subprocess.Popen(command, env=env, stdout=log, stderr=subprocess.STDOUT)
-        try:
-            deadline = time.monotonic() + 60
-            while not ready.exists() or read_counts(audit)[block_key] <= previous_count:
-                assert process.poll() is None, log_path.read_text()
-                assert time.monotonic() < deadline, f"boundary timeout: {log_path}"
-                time.sleep(0.01)
-        finally:
-            if process.poll() is None:
-                process.kill()
-            process.wait(timeout=10)
+from tests.support.recovery import kill_at_boundary, read_counts
 
 
 @pytest.mark.parametrize("mode", ["cycle", "dynamic"])

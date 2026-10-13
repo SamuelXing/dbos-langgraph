@@ -12,9 +12,13 @@ Repeated-recovery tests kill a worker three times at the same unfinished node.
 Two seed families vary completion delays on each restart for cycles and Send
 fan-out. These are bounded scheduling samples, not a broad fault campaign.
 
-Next tests need to cover crashes at changing boundaries, two workers recovering
-the same history, database disconnects, duplicate invocations, retries, and
-cancellation. Identical-input task identity remains an open question.
+A second test crashes the graph in three successive loop rounds. A PostgreSQL
+case synchronizes recovery requests from two distinct workers for a dead worker's
+history and checks results and node-body counts.
+
+Next tests need to cover stale workers that are still running, database disconnects,
+duplicate invocations, retries, and cancellation. Identical-input task identity
+remains an open question.
 
 ## LangGraph features
 

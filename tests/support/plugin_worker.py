@@ -26,6 +26,27 @@ async def scheduling_delay(key):
     await asyncio.sleep(int.from_bytes(digest[:2], "big") / 65535 * 0.05)
 
 
+async def hold_recovery_node(key):
+    if key != os.environ.get("GRAPH_GATE_KEY"):
+        return
+    release = Path(os.environ["GRAPH_GATE_RELEASE"])
+    while not release.exists():
+        await asyncio.sleep(0.01)
+
+
+async def request_recovery():
+    owner = os.environ.get("GRAPH_RECOVER_OWNER")
+    if owner is None:
+        return
+    Path(os.environ["GRAPH_RECOVER_READY"]).write_text("ready")
+    release = Path(os.environ["GRAPH_RECOVER_RELEASE"])
+    while not release.exists():
+        await asyncio.sleep(0.01)
+    # Exercise the SDK recovery service path; this internal hook is test-only.
+    await asyncio.to_thread(DBOS._recover_pending_workflows, [owner])
+    Path(os.environ["GRAPH_RECOVER_DONE"]).write_text("requested")
+
+
 def invocation_key(name, state):
     if name in ("b", "c"):
         return name + "2"
@@ -68,6 +89,7 @@ def build(mode):
                     key = invocation_key(name, state)
                     audit(key)
                     await scheduling_delay(key)
+                    await hold_recovery_node(key)
                     if key == os.environ.get("GRAPH_BLOCK_KEY"):
                         await asyncio.sleep(3600)
                     return await GRAPH.nodes[name](state)
@@ -145,7 +167,7 @@ async def run(args):
         config={
             "name": "plugin-acceptance",
             "system_database_url": os.environ["DBOS_SYSTEM_DATABASE_URL"],
-            "executor_id": "plugin-" + args.id,
+            "executor_id": os.environ.get("GRAPH_EXECUTOR_ID", "plugin-" + args.id),
             "application_version": "plugin-v0-" + args.id,
             "enable_otlp": False,
             "log_level": "WARNING",
@@ -162,6 +184,7 @@ async def run(args):
             with SetWorkflowID(args.id):
                 handle = await app.start(state)
         else:
+            await request_recovery()
             handle = await DBOS.retrieve_workflow_async(args.id)
         print(json.dumps({"state": await asyncio.wait_for(handle.get_result(), 60)}), flush=True)
     finally:

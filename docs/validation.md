@@ -71,3 +71,28 @@ Each attempt writes a separate log under pytest's temporary directory.
 These cases do not test arbitrary task registration reorderings, changing crash
 boundaries, database faults, or recovery by two workers at once. There is no change
 to the installed adapter or its stored history format in this milestone.
+
+## Successive boundaries and competing workers
+
+The full suite passed 27 tests on PostgreSQL in 102.41 seconds. SQLite passed
+26 tests in 98.66 seconds and skipped the PostgreSQL-only competing-worker test.
+Ruff lint/format, strict mypy, and diff whitespace checks passed.
+
+The successive-boundary case kills the graph during the slow node in each of the
+first three loop rounds. It checks that previously observed committed bodies are
+reused, each blocked body executes twice, and four rounds reconstruct the expected
+state.
+
+The competing-worker case first kills the original worker. Two processes with
+distinct executor IDs then reach a barrier before requesting recovery for that
+worker's history. The test keeps the unfinished node blocked until both recovery
+requests return. Both workers must retrieve the expected graph result. Body counts
+must show one restart of the interrupted node, no repeats of observed committed
+nodes, and at most one additional execution of other interrupted bodies.
+
+This test invokes DBOS._recover_pending_workflows in the harness to exercise the
+SDK recovery-service path. The adapter does not depend on that internal API.
+Application versions are isolated per test. The result applies to competing
+requests for a dead worker's history, not recovery of a worker that is still alive,
+network partitions, rolling deployment, or a general exactly-once side-effect claim.
+No library code or stored history format changed in this milestone.
