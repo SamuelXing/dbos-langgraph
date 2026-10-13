@@ -4,13 +4,24 @@ import inspect
 import re
 from collections.abc import Awaitable, Callable, Coroutine
 from copy import deepcopy
-from typing import Any, Literal
+from typing import Any, Literal, TypedDict
 
 from dbos import DBOS
 from langgraph.graph import StateGraph
 
+from ._state import fingerprint
+
 Node = Callable[[Any], Awaitable[dict[str, Any]]]
 ExecutionMode = Literal["step", "workflow"]
+
+
+class _NodeResult(TypedDict):
+    identity: str
+    update: dict[str, Any]
+
+
+class ReplayMismatchError(RuntimeError):
+    """Recovered node history does not match the requested invocation."""
 
 
 class DurableGraph:
@@ -78,6 +89,7 @@ class DBOSLangGraphPlugin:
             result = await function(deepcopy(state))
             if not isinstance(result, dict):
                 raise TypeError("nodes must return dict state updates")
+            fingerprint(result)
             return result
 
         durable_leaf = (
@@ -86,15 +98,29 @@ class DBOSLangGraphPlugin:
             else leaf
         )
 
-        async def isolated_node(state: Any) -> dict[str, Any]:
-            return await durable_leaf(state)
+        async def isolated_node(state: Any) -> _NodeResult:
+            identity = fingerprint([self.name, name, execute_in, state])
+            return {"identity": identity, "update": await durable_leaf(state)}
 
         node_workflow = DBOS.workflow(name=f"dbos_langgraph.{self.name}.{name}.workflow")(
             isolated_node
         )
 
         async def node(state: Any) -> dict[str, Any]:
-            result = await node_workflow(state)
+            expected = fingerprint([self.name, name, execute_in, state])
+            envelope = await node_workflow(state)
+            if "identity" not in envelope or "update" not in envelope:
+                raise ReplayMismatchError(
+                    f"unsupported history format for {self.name}/{name}; "
+                    "recover with the adapter version that created this workflow"
+                )
+            if envelope["identity"] != expected:
+                raise ReplayMismatchError(
+                    f"replay input mismatch for {self.name}/{name}: "
+                    f"expected {expected}, recovered {envelope['identity']}; "
+                    "restore compatible routing and code before recovery"
+                )
+            result = envelope["update"]
             self._node_completed(name, state, result)
             return result
 

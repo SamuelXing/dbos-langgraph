@@ -16,25 +16,34 @@ from .example import GRAPH, initial
 from .pregel_dbos import MapState, State, audit, checked_phase
 
 
+def invocation_key(name, state):
+    if name in ("b", "c"):
+        return name + "2"
+    if name == "tail":
+        return "tail"
+    if name == "map":
+        return f"map:{state['item']}"
+    return f"{cycle_index(name, state)}:{name}"
+
+
+def cycle_index(name, state):
+    if name == "plan":
+        return state["round"] * 3
+    offset = 1 if name in ("fast", "slow") else 2
+    return (state["round"] - 1) * 3 + offset
+
+
 class ProbePlugin(DBOSLangGraphPlugin):
     def _node_completed(self, name, state, result):
-        key = (
-            name + "2"
-            if name in ("b", "c")
-            else "tail"
-            if name == "tail"
-            else f"map:{state['item']}"
-            if name == "map"
-            else f"{state['round'] * 3 if name == 'plan' else (state['round'] - 1) * 3 + (1 if name in ('fast', 'slow') else 2)}:{name}"
-        )
+        key = invocation_key(name, state)
         if os.environ.get("GRAPH_COMMITS"):
             with open(os.environ["GRAPH_COMMITS"], "a") as stream:
                 stream.write(json.dumps({"key": key}) + "\n")
                 stream.flush()
                 os.fsync(stream.fileno())
-        if key == os.environ.get("GRAPH_READY_KEY") or (
-            name == "b" and os.environ.get("GRAPH_READY")
-        ):
+        ready_key_reached = key == os.environ.get("GRAPH_READY_KEY")
+        sequence_finished = name == "b" and os.environ.get("GRAPH_READY")
+        if ready_key_reached or sequence_finished:
             Path(os.environ["GRAPH_READY"]).write_text("child workflow committed")
 
 
@@ -46,12 +55,7 @@ def build(mode):
 
             def factory(name):
                 async def node(state):
-                    index = (
-                        state["round"] * 3
-                        if name == "plan"
-                        else (state["round"] - 1) * 3 + (1 if name in ("fast", "slow") else 2)
-                    )
-                    key = f"{index}:{name}"
+                    key = invocation_key(name, state)
                     audit(key)
                     if key == os.environ.get("GRAPH_BLOCK_KEY"):
                         await asyncio.sleep(3600)
@@ -82,7 +86,12 @@ def build(mode):
         plugin.add_node(graph, "map", mapper)
 
         async def route(state):
-            return [Send("map", {"item": i}) for i in state["items"]]
+            items = (
+                list(reversed(state["items"]))
+                if os.environ.get("GRAPH_INPUT_DRIFT")
+                else state["items"]
+            )
+            return [Send("map", {"item": i}) for i in items]
 
         graph.add_conditional_edges(START, route)
         graph.add_edge("map", END)

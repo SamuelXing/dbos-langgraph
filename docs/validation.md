@@ -33,3 +33,23 @@ The first test invocation failed because the explicitly chosen test-artifact par
 folder did not exist; creating it allowed both acceptance suites to complete.
 Docker Compose, hosted CI, Python 3.13, randomized crash campaigns, and production
 rolling deployments were not exercised locally.
+
+## Replay input guard (0.1.0a2)
+
+The final suite passed 21 tests on each backend: SQLite in 47.31 seconds and
+PostgreSQL in 47.77 seconds. Five cases use real process crashes, including a case
+that changes Send order on restart and expects ReplayMismatchError. Sixteen tests
+cover registration, invocation limits, and the JSON fingerprint schema.
+
+Ruff, strict mypy, distribution builds, and importing the installed 0.1.0a2 wheel
+from outside the checkout passed.
+
+During development, PostgreSQL exposed a race in the test observations: a durable
+child result may commit before the parent writes its marker. The assertions now
+require marked results to execute once, the deliberately blocked body to execute
+twice, and unmarked bodies to execute at most once more after the crash. The marker
+is an observation after commit, not an atomic database-commit record.
+
+This milestone adds input mismatch detection. It does not establish stable identity
+for identical-input tasks or cover randomized faults, concurrent recovery, retry,
+cancellation, or database-disconnect behavior.

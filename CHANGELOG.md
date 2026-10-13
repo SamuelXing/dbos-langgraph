@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.0a2 (unreleased)
+
+- Check recovered node inputs before applying their state updates.
+- Raise ReplayMismatchError when routing changes select a different stored input.
+- Require JSON-compatible node inputs and updates.
+- Add a crash/recovery test for changed Send order.
+
+The stored node-result format changed. Recover histories created by 0.1.0a1 with
+0.1.0a1; there is no migration to the new format.
+
 ## 0.1.0a1 — unreleased
 
 - Extract the native LangGraph/DBOS adapter into an independent package.

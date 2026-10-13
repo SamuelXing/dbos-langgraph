@@ -1,49 +1,37 @@
-# Production readiness gates
+# Before production use
 
-The first extracted release is alpha. Passing the current subset of tests is necessary
-but insufficient for production readiness. Each capability must have a supported API,
-recovery tests, failure semantics, and documentation before becoming a release promise.
+The adapter is alpha. These are the remaining release requirements.
 
-## Gate 1: durable core
+## Recovery
 
-- Independent packaging, reproducible dependency lock, typed API, lint and unit checks.
-- SIGKILL recovery for loops, parallel joins, dynamic fan-out, and multistep isolation
-  on SQLite and PostgreSQL; repeated and randomized scheduling perturbations.
-- Fail closed on unsupported graph features; structured diagnostics for replay mismatch.
-- Error/retry/cancellation behavior, duplicate invocations, simultaneous recovery,
-  and database disconnects tested explicitly.
-- Stable node/task identities and documented SDK registration/version contracts.
+The current tests cover process crashes during cycles, parallel joins, Send fan-out,
+and multistep nodes. They check final state and count actual node-body executions.
+Changed Send inputs must produce a replay error.
 
-Initial extraction establishes packaging and existing crash cases. Randomized testing,
-concurrent recovery guarantees, comprehensive database faults, and fail-closed feature
-inspection are still incomplete.
+Next tests need to cover repeated crashes, randomized scheduling, two workers
+recovering the same history, database disconnects, duplicate invocations, retries,
+and cancellation. Identical-input task identity remains an open question.
 
-## Gate 2: framework integration
+## LangGraph features
 
-- Config/runtime/context serialization with an explicit supported schema.
-- interrupt/resume and durable human-input delivery with repeat-crash tests.
-- Subgraph semantics and Functional API, including parallel nested orchestration.
-- Streaming delivery and deduplication contract; token/events consistency on replay.
-- Explicit mapping of timeout, cancellation, and retry policies; prevent double retries.
+The supported API accepts async nodes with a single state argument and dict updates.
+Runtime/context injection, interrupt/resume, subgraphs, streaming, and Functional
+API need separate implementations and recovery tests. Add them one at a time;
+passing an ordinary invocation test is not sufficient.
 
-None of these advanced capabilities is an initial release claim.
+## Deployments
 
-## Gate 3: operations and compatibility
+Pending histories must survive a worker restart with compatible code. Rolling
+upgrades and incompatible graph changes need executable tests and an operational
+procedure. There is no history migration support yet.
 
-- CI recovery matrix across declared SDK/Python/database versions, plus wheel-install checks.
-- Application upgrades with pending workflows, rolling deployment, schema/version handling,
-  and deprecation policy verified in executable tests.
-- Structured logs, trace correlation, history growth metrics, and operational runbooks.
-- Comparable benchmarks for recovery latency, history growth, CPU, and retention policies.
-- Dependency/update review, disclosure process, licensing review, and release checklist.
+CI is configured for Python 3.12/3.13 with SQLite and PostgreSQL. Hosted results
+must be reviewed before declaring that matrix supported. Add trace correlation,
+recovery timing, history-size measurements, and retention guidance before a
+production release.
 
-CI is configured but has not run remotely. No release or production designation is
-allowed until the applicable gates are met and evidence is recorded.
+## Releases
 
-## Suggested implementation order
-
-1. Stabilize core identities, recovery behavior, and unsupported-feature detection.
-2. Add runtime context and policy translation with fault-injection coverage.
-3. Implement interrupt/resume, then subgraphs, then streaming.
-4. Exercise upgrades and concurrent recovery; broaden the supported version matrix.
-5. Publish an alpha only after explicit authorization and artifact review.
+Build and install the wheel in a clean environment. Record the tested dependency
+versions, API changes, and history-format changes. Establish a security contact
+and review the release before publishing.

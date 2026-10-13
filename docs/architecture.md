@@ -1,25 +1,25 @@
-# Architecture
+# Execution model
 
-The package retains native LangGraph Pregel. It wraps registered graph execution in
-a DBOS workflow and isolates each node invocation into its own child workflow.
-Default leaf nodes use one durable step. Workflow-mode nodes explicitly orchestrate
-DBOS steps within their own child history.
+The adapter uses LangGraph's native Pregel runtime for scheduling, routing, reducers,
+and joins. `compile()` wraps the graph in a DBOS workflow without a LangGraph
+checkpointer.
 
-This avoids unconstrained multistep interleaving in one parent history. It does not
-remove the determinism requirement for graph routing or parent durable-call ordering.
-Simple Send and fixed BSP cases have test evidence; arbitrary graph scheduling does not.
+A node invocation starts a child workflow. In step mode, the node body is one DBOS
+step. In workflow mode, the node body can call several DBOS steps within that
+child's history. This prevents parallel nodes from sharing a step counter.
 
-The public facade provides ainvoke/start, not full CompiledStateGraph compatibility.
-DBOS initialization, launch/destroy, executor IDs, application versions, recovery
-services, and database ownership remain application responsibilities.
+During recovery, Pregel reconstructs state from saved node updates. The adapter
+checks an input fingerprint before applying each recovered update. See
+[replay and code changes](replay.md) for the check and its limits.
 
-Names are stable ASCII identifiers under `dbos_langgraph.<graph>.<node>` and form
-part of the persistence contract. Do not rename or change durable-call order for
-pending histories without a compatible migration/version strategy.
+The application initializes DBOS, registers its graphs, launches workers, and
+manages recovery ownership. The adapter exposes `ainvoke()` and `start()`; it does
+not implement the full CompiledStateGraph interface.
 
-The package does not checkpoint graph state independently. Replay reconstructs
-Pregel state from durable node results. Side effects before step result commitment
-can be repeated, requiring external idempotency.
+Registered names use `dbos_langgraph.<graph>.<node>` and are part of stored history.
+Keep names and call order stable while workflows are pending. An unfinished step
+can run again, so external writes need idempotency or suitable transactions.
 
-Tests/support is intentionally excluded from the wheel. It contains audit and blocking
-probes, a mock agent, and the original pure executor as an independent state reference.
+Test fixtures live under `tests/support` and are excluded from the wheel. They
+include blocking probes, execution counters, and a pure executor used to check
+reconstructed state independently of Pregel.

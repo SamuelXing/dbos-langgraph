@@ -45,3 +45,21 @@ async def test_invalid_recursion_limit_never_starts_workflow(limit):
         await graph.ainvoke({}, recursion_limit=limit)
     with pytest.raises(ValueError, match="positive integer"):
         await graph.start({}, recursion_limit=limit)
+
+
+def test_fingerprint_preserves_types_and_ignores_object_key_order():
+    from dbos_langgraph._state import fingerprint
+
+    assert fingerprint({"a": 1, "b": [True, None]}) == fingerprint({"b": [True, None], "a": 1})
+    assert fingerprint([1]) != fingerprint([True])
+    assert fingerprint([1, 2]) != fingerprint([2, 1])
+
+
+@pytest.mark.parametrize(
+    "state", [{1: "value"}, (1, 2), {"value": float("nan")}, {"value": object()}]
+)
+def test_fingerprint_rejects_ambiguous_state(state):
+    from dbos_langgraph._state import fingerprint
+
+    with pytest.raises(TypeError, match="JSON"):
+        fingerprint(state)

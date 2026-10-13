@@ -67,6 +67,11 @@ child workflow. Default `execute_in="step"` wraps its body in one durable step.
 `execute_in="workflow"` supports explicit DBOS multistep orchestration inside that
 child; all nondeterministic operations must be in steps.
 
+Node inputs and updates must be JSON-compatible values with string object keys.
+Recovered results carry an input fingerprint; a changed invocation raises
+`ReplayMismatchError`. See [replay and code changes](docs/replay.md) for the exact
+check and its limits.
+
 Routing/reducers and the order of durable orchestration must be deterministic.
 Pending histories require compatible code and stable registered names. A version
 string alone does not enforce compatibility. SDK recovery rules, executor IDs,

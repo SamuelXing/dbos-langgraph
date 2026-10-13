@@ -16,15 +16,16 @@ from tests.support.example import GRAPH, initial
 
 
 @pytest.mark.parametrize(
-    "mode,rounds,ready_key,block_key",
+    "mode,rounds,ready_key,block_key,input_drift",
     [
-        ("cycle", 3, "1:fast", "1:slow"),
-        ("cycle", 102, "301:fast", "301:slow"),
-        ("dynamic", 1, "map:1", "map:2"),
-        ("isolated", 1, "unused", "tail"),
+        ("cycle", 3, "1:fast", "1:slow", False),
+        ("cycle", 102, "301:fast", "301:slow", False),
+        ("dynamic", 1, "map:1", "map:2", False),
+        ("dynamic", 1, "map:1", "map:2", True),
+        ("isolated", 1, "unused", "tail", False),
     ],
 )
-def test_native_pregel_crash(tmp_path, mode, rounds, ready_key, block_key):
+def test_native_pregel_crash(tmp_path, mode, rounds, ready_key, block_key, input_drift):
     database = os.environ.get("GRAPH_TEST_DATABASE_URL", f"sqlite:///{tmp_path}/history.sqlite")
     audit, ready = tmp_path / "audit.jsonl", tmp_path / "ready"
     commits = tmp_path / "commits.jsonl"
@@ -69,15 +70,17 @@ def test_native_pregel_crash(tmp_path, mode, rounds, ready_key, block_key):
     env.pop("GRAPH_BLOCK_KEY")
     env.pop("GRAPH_READY_KEY")
     env.pop("GRAPH_READY")
-    if mode in ("unsafe", "isolated"):
+    if mode == "isolated":
         env["GRAPH_REPLAY_JITTER"] = "1"  # Force an allowed scheduling-order perturbation.
+    if input_drift:
+        env["GRAPH_INPUT_DRIFT"] = "1"
     recovered = subprocess.run(
         command + ["recover", "--id", identity], env=env, capture_output=True, text=True, timeout=90
     )
     (tmp_path / "recover.log").write_text(recovered.stdout + recovered.stderr)
-    if mode == "unsafe":
+    if input_drift:
         assert recovered.returncode != 0
-        assert "history identity mismatch" in recovered.stderr + recovered.stdout
+        assert "replay input mismatch" in recovered.stderr + recovered.stdout
         return
     assert recovered.returncode == 0, recovered.stderr + recovered.stdout
     state = json.loads(recovered.stdout.strip().splitlines()[-1])["state"]
@@ -94,9 +97,8 @@ def test_native_pregel_crash(tmp_path, mode, rounds, ready_key, block_key):
         return
     assert counts[ready_key] == 1
     assert counts[block_key] == 2
-    assert all(v == (1 if k in committed else before[k] + 1) for k, v in counts.items()), (
-        counts,
-        committed,
-    )
+    # A child can commit before the parent writes its observation marker.
+    # Such an unmarked child may be reused; an unfinished body may run once more.
+    assert all(1 <= count <= before[key] + 1 for key, count in counts.items()), counts
     assert all(counts[k] == 1 for k in committed)
     assert len(counts) == (rounds * 4 if mode == "cycle" else 4)
