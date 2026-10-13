@@ -53,3 +53,21 @@ is an observation after commit, not an atomic database-commit record.
 This milestone adds input mismatch detection. It does not establish stable identity
 for identical-input tasks or cover randomized faults, concurrent recovery, retry,
 cancellation, or database-disconnect behavior.
+
+## Repeated recovery with seeded delays
+
+The full suite passed 25 tests on SQLite in 83.20 seconds and PostgreSQL in
+81.68 seconds. Ruff lint/format and strict mypy also passed.
+
+Four new cases cover cycles and Send fan-out with seed families 7 and 19. Each
+case kills the worker three times at the same blocked node, then allows a final
+recovery to finish. Seeds change between restarts. Delays run inside node bodies,
+so they vary completion timing without changing durable child registration order.
+
+Assertions check that marked committed node bodies run once, the blocked body
+runs four times, and the recovered state matches the expected reducers and routing.
+Each attempt writes a separate log under pytest's temporary directory.
+
+These cases do not test arbitrary task registration reorderings, changing crash
+boundaries, database faults, or recovery by two workers at once. There is no change
+to the installed adapter or its stored history format in this milestone.

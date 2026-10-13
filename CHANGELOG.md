@@ -2,6 +2,9 @@
 
 ## 0.1.0a2 (unreleased)
 
+- Exercise three consecutive worker crashes under seeded completion delays for
+  cycles and Send fan-out.
+
 - Check recovered node inputs before applying their state updates.
 - Raise ReplayMismatchError when routing changes select a different stored input.
 - Require JSON-compatible node inputs and updates.

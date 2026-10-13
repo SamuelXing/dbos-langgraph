@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -14,6 +15,15 @@ from dbos_langgraph import DBOSLangGraphPlugin
 
 from .example import GRAPH, initial
 from .pregel_dbos import MapState, State, audit, checked_phase
+
+
+async def scheduling_delay(key):
+    """Vary body completion order without changing graph inputs or call order."""
+    seed = os.environ.get("GRAPH_SCHEDULE_SEED")
+    if seed is None:
+        return
+    digest = hashlib.sha256(f"{seed}:{key}".encode()).digest()
+    await asyncio.sleep(int.from_bytes(digest[:2], "big") / 65535 * 0.05)
 
 
 def invocation_key(name, state):
@@ -57,6 +67,7 @@ def build(mode):
                 async def node(state):
                     key = invocation_key(name, state)
                     audit(key)
+                    await scheduling_delay(key)
                     if key == os.environ.get("GRAPH_BLOCK_KEY"):
                         await asyncio.sleep(3600)
                     return await GRAPH.nodes[name](state)
@@ -78,6 +89,7 @@ def build(mode):
         async def mapper(state):
             key = f"map:{state['item']}"
             audit(key)
+            await scheduling_delay(key)
             if key == os.environ.get("GRAPH_BLOCK_KEY"):
                 await asyncio.sleep(3600)
             await asyncio.sleep(0.01 if state["item"] % 2 else 0.03)

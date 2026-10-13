@@ -8,9 +8,13 @@ The current tests cover process crashes during cycles, parallel joins, Send fan-
 and multistep nodes. They check final state and count actual node-body executions.
 Changed Send inputs must produce a replay error.
 
-Next tests need to cover repeated crashes, randomized scheduling, two workers
-recovering the same history, database disconnects, duplicate invocations, retries,
-and cancellation. Identical-input task identity remains an open question.
+Repeated-recovery tests kill a worker three times at the same unfinished node.
+Two seed families vary completion delays on each restart for cycles and Send
+fan-out. These are bounded scheduling samples, not a broad fault campaign.
+
+Next tests need to cover crashes at changing boundaries, two workers recovering
+the same history, database disconnects, duplicate invocations, retries, and
+cancellation. Identical-input task identity remains an open question.
 
 ## LangGraph features
 
