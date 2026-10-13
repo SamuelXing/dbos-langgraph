@@ -21,8 +21,10 @@ sessions. A live-worker probe verifies that an original invocation's altered upd
 does not replace the recovered result. Recovery still requires verified-dead
 executors; fencing stored results does not fence external tool effects.
 
-Next tests need to cover prolonged database outages, duplicate invocations, and
-crashes during cancellation. Identical-input task identity
+Proxy tests cover a three-second connection-path outage during result commitment,
+with and without a worker crash. Next tests need to cover ambiguous commit
+acknowledgments, long-duration outages, duplicate invocations, and crashes during
+cancellation. Identical-input task identity
 remains an open question.
 
 Ordinary errors, transient/exhausted retries, backoff crashes, per-attempt timeouts,

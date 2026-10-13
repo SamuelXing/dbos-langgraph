@@ -21,8 +21,8 @@ before its marker is written, so an absent marker does not prove unfinished work
 Assertions freeze each body's execution count when its commit is first observed
 and require that count to remain unchanged on later recoveries. A body may already
 have repeated before that observation. Separate assertions check known committed
-and deliberately unfinished nodes. Seeded delays vary body completion timing, not child registration
-order.
+and deliberately unfinished nodes. Seeded delays vary body completion timing,
+not child registration order.
 
 The competing-worker harness calls DBOS._recover_pending_workflows to exercise the
 SDK recovery-service path. The installed adapter does not call that internal API.
@@ -35,6 +35,12 @@ reconnection and one body execution per node. The stale-invocation test holds an
 original body while recovery claims its history, lets that body return an altered
 update, and verifies that the expected graph result survives. Recovered jobs may
 run on either process, so the altered update belongs only to the first invocation.
+Two proxy tests block a worker's database connection path for three seconds after
+a node body returns. Direct database inspection checks that the root remains
+PENDING and the step output is absent. Restoring the connection commits the result
+without another body execution; killing the worker during the outage causes that
+unfinished body to execute again on recovery. The committed sibling is reused.
+
 See [recovery operations](recovery-operations.md) for deployment prerequisites.
 
 ## Failure checks
@@ -59,8 +65,8 @@ uv run pytest -q
 ```
 
 Set GRAPH_TEST_DATABASE_URL to a dedicated PostgreSQL database to run that backend.
-The competing-worker and PostgreSQL fault cases are skipped on SQLite. Process logs are retained in the
-pytest temporary directory. The wheel contains the library and its type marker;
+The competing-worker and PostgreSQL fault cases are skipped on SQLite. Process
+logs are retained in the pytest temporary directory. The wheel contains the library and its type marker;
 test fixtures are excluded.
 
 ## Limits
@@ -74,9 +80,12 @@ promise exactly-once external side effects.
 
 | Check | Result |
 | --- | --- |
-| PostgreSQL suite | 44 passed, 155.01 seconds |
-| SQLite suite | 41 passed, 3 PostgreSQL-only cases skipped, 151.85 seconds |
+| PostgreSQL suite | 46 passed, 158.42 seconds |
+| SQLite suite | 41 passed, 5 PostgreSQL-only cases skipped, 134.61 seconds |
 | Ruff lint and formatting | Passed |
 | Strict mypy | Passed |
 | Source distribution and wheel build | Passed |
 | Installed wheel import outside checkout | Passed |
+
+The commit-outage cases also passed a focused run with exact execution counts for
+every node: 2 passed in 16.85 seconds.

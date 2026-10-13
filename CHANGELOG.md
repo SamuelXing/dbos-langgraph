@@ -2,6 +2,9 @@
 
 ## 0.1.0a2 (unreleased)
 
+- Test result commitment through a bounded connection outage, both with a live
+  worker and with a crash before connectivity returns.
+
 - Test reconnecting after termination of a worker's tagged PostgreSQL sessions.
 - Test stale-invocation result fencing and document the dead-executor prerequisite.
 - Compare committed body counts from their first observed commit in repeated-crash tests.

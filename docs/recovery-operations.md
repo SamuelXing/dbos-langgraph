@@ -37,3 +37,23 @@ This covers abrupt connection loss at one boundary, not a prolonged database out
 or a partition between workers. A successful reconnect test is not evidence that
 live-worker takeover is safe. Do not trigger recovery merely because a worker has
 lost its database connection.
+
+## Losing connectivity while storing a node result
+
+Two commit-outage tests put one worker behind a local connection relay. After a
+sibling has committed, the relay drops existing sessions and rejects new ones.
+The held node is released and returns its update while that connection path stays
+unavailable for three seconds. A separate inspection connection checks that the
+root remains PENDING and the returned node's step output has not been stored.
+PostgreSQL remains running throughout.
+
+When the relay is restored with the worker still alive, the SDK stores the result
+and completes the graph without another body execution. When the worker is killed
+before connectivity returns, recovery runs that unfinished body again and reuses
+the committed sibling. A returned value alone is therefore not evidence of a
+committed durable result. External effects made before result commitment need
+idempotency.
+
+These are bounded connection-path outages at one commit boundary. They do not
+cover long-duration outages, PostgreSQL restarts, ambiguous commit acknowledgments,
+or asymmetric partitions between multiple workers.
