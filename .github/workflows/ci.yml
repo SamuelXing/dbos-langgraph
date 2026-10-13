@@ -1,0 +1,51 @@
+name: checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.12'
+      - run: uv sync --extra dev --frozen
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run mypy
+      - run: uv build
+      - run: |
+          uv venv /tmp/wheel-check --python 3.12
+          uv pip install --python /tmp/wheel-check/bin/python dist/*.whl
+          cd /tmp
+          /tmp/wheel-check/bin/python -c 'from dbos_langgraph import DBOSLangGraphPlugin'
+  recovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        python: ['3.12', '3.13']
+        backend: [sqlite, postgres]
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: dbos_langgraph_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd 'pg_isready -U test -d dbos_langgraph_test'
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - run: uv sync --extra dev --frozen
+      - run: |
+          if [ '${{ matrix.backend }}' = postgres ]; then
+            export GRAPH_TEST_DATABASE_URL='postgresql://test:test@localhost:5432/dbos_langgraph_test'
+          fi
+          uv run pytest -q
