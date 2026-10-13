@@ -62,6 +62,7 @@ class PostgresProxy:
                     if not data:
                         return
                     destination = upstream if source is client else client
+                    self.before_forward(client, upstream, source, data)
                     destination.sendall(data)
         except (OSError, ValueError):
             # Dropping a connection is the fault the test intends to inject.
@@ -73,6 +74,9 @@ class PostgresProxy:
                     self.connections.discard(upstream)
             if upstream is not None:
                 upstream.close()
+
+    def before_forward(self, client, upstream, source, data):
+        """Allow a specialized fault probe to inspect or hold a relay packet."""
 
     def interrupt(self):
         self.blocked.set()

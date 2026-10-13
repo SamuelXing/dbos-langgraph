@@ -55,5 +55,24 @@ committed durable result. External effects made before result commitment need
 idempotency.
 
 These are bounded connection-path outages at one commit boundary. They do not
-cover long-duration outages, PostgreSQL restarts, ambiguous commit acknowledgments,
-or asymmetric partitions between multiple workers.
+cover long-duration outages, PostgreSQL restarts, or asymmetric partitions between
+multiple workers. Lost acknowledgments have separate tests below.
+
+## Losing the commit acknowledgment
+
+Two acknowledgment tests intercept the COMMIT for a known node-step transaction.
+The relay sends that command to PostgreSQL but holds the response. A separate
+connection must see the stored step output while the graph root is still PENDING.
+Only then does the test discard the acknowledgment.
+
+The live-worker case reconnects and finishes with one body execution per node.
+The crash case kills the worker before it receives confirmation; recovery also
+reuses the committed output without rerunning that body. This differs from losing
+the worker before result commitment, where the unfinished body runs again.
+
+The probe is tied to the pinned psycopg/SQLAlchemy transaction stream. It buffers
+client packets to identify the known INSERT and COMMIT, and is restricted to a
+local test database without TLS. It is not a general PostgreSQL protocol parser.
+A dependency change that alters that stream must update the probe and rerun it.
+These cases cover one stored node result, not arbitrary application transactions
+or external tool writes.

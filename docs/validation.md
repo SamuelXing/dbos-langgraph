@@ -41,6 +41,11 @@ PENDING and the step output is absent. Restoring the connection commits the resu
 without another body execution; killing the worker during the outage causes that
 unfinished body to execute again on recovery. The committed sibling is reused.
 
+Two acknowledgment tests withhold a known COMMIT response until another database
+session sees the stored step result. Dropping that response or killing the worker
+before it receives confirmation must leave every node body executed once after
+the graph completes.
+
 See [recovery operations](recovery-operations.md) for deployment prerequisites.
 
 ## Failure checks
@@ -80,12 +85,12 @@ promise exactly-once external side effects.
 
 | Check | Result |
 | --- | --- |
-| PostgreSQL suite | 46 passed, 158.42 seconds |
-| SQLite suite | 41 passed, 5 PostgreSQL-only cases skipped, 134.61 seconds |
+| PostgreSQL suite | 48 passed, 165.88 seconds |
+| SQLite suite | 41 passed, 7 PostgreSQL-only cases skipped, 133.29 seconds |
 | Ruff lint and formatting | Passed |
 | Strict mypy | Passed |
 | Source distribution and wheel build | Passed |
 | Installed wheel import outside checkout | Passed |
 
-The commit-outage cases also passed a focused run with exact execution counts for
-every node: 2 passed in 16.85 seconds.
+The acknowledgment-loss cases also passed a focused run requiring proof that the
+relay held the server response: 2 passed in 7.96 seconds.

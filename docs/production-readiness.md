@@ -22,9 +22,10 @@ does not replace the recovered result. Recovery still requires verified-dead
 executors; fencing stored results does not fence external tool effects.
 
 Proxy tests cover a three-second connection-path outage during result commitment,
-with and without a worker crash. Next tests need to cover ambiguous commit
-acknowledgments, long-duration outages, duplicate invocations, and crashes during
-cancellation. Identical-input task identity
+with and without a worker crash. Lost-acknowledgment tests verify reuse after a
+step commit is visible to a separate session but its response is withheld.
+Next tests need to cover long-duration outages, duplicate invocations, and crashes
+during cancellation. Identical-input task identity
 remains an open question.
 
 Ordinary errors, transient/exhausted retries, backoff crashes, per-attempt timeouts,

@@ -2,6 +2,9 @@
 
 ## 0.1.0a2 (unreleased)
 
+- Verify committed node-result reuse after a lost COMMIT acknowledgment, both with
+  a live worker and with a crash before confirmation.
+
 - Test result commitment through a bounded connection outage, both with a live
   worker and with a crash before connectivity returns.
 
