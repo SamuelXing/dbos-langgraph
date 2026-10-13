@@ -49,9 +49,17 @@ async def run(args):
     )
     DBOS.launch()
     try:
+        if args.race:
+            (directory / f"ready-{args.worker}").touch()
+            await wait_for(directory / "start")
         with SetWorkflowID(args.id):
             handle = await app.start({"value": args.value})
         (directory / f"started-{args.worker}").touch()
+        if args.recover:
+            await wait_for(directory / "recover-owner")
+            owner = (directory / "recover-owner").read_text()
+            # Exercise the SDK recovery-service path after the parent proves death.
+            await asyncio.to_thread(DBOS._recover_pending_workflows, [owner])
         result = await asyncio.wait_for(handle.get_result(), 30)
         print(json.dumps(result), flush=True)
     finally:
@@ -64,4 +72,6 @@ if __name__ == "__main__":
     parser.add_argument("--worker", required=True)
     parser.add_argument("--value", type=int, required=True)
     parser.add_argument("--directory", required=True)
+    parser.add_argument("--race", action="store_true")
+    parser.add_argument("--recover", action="store_true")
     asyncio.run(run(parser.parse_args()))

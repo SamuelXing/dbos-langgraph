@@ -37,8 +37,19 @@ These tests characterize DBOS first-input behavior, not input-conflict rejection
 Two more cases hold an original node while two separate executors start its root
 ID with identical or changed inputs. Both callers receive the original result,
 and audit files across all processes contain one body execution. These cases
-establish reuse of an existing pending history; they do not race the first
-creation of an ID or crash its owner during duplicate starts.
+establish reuse of an existing pending history.
+
+Two creation cases release separate initialized executors at a common start
+barrier. Identical or conflicting inputs must produce one body execution and one
+shared result; either contender may win. Two PostgreSQL cases kill the original
+owner after duplicate callers receive handles but before its node commits. A live
+caller requests recovery of the confirmed-dead executor. The unfinished body runs
+again with the original input, and both callers receive that input's result.
+The recovery probe uses the same test-only internal SDK API described above.
+
+SDK initialization is serialized before the creation barrier. Concurrent cold
+launches against an empty SQLite database exposed a migration-table creation race
+in DBOS 3.2.0. These graph tests do not cover concurrent schema initialization.
 
 ## PostgreSQL fault checks
 
@@ -97,8 +108,8 @@ promise exactly-once external side effects.
 
 | Check | Result |
 | --- | --- |
-| PostgreSQL suite | 48 passed, 165.88 seconds |
-| SQLite suite | 41 passed, 7 PostgreSQL-only cases skipped, 133.29 seconds |
+| PostgreSQL suite | 56 passed, 188.52 seconds |
+| SQLite suite | 47 passed, 9 PostgreSQL-only cases skipped, 163.24 seconds |
 | Ruff lint and formatting | Passed |
 | Strict mypy | Passed |
 | Source distribution and wheel build | Passed |
@@ -107,6 +118,5 @@ promise exactly-once external side effects.
 The acknowledgment-loss cases also passed a focused run requiring proof that the
 relay held the server response: 2 passed in 7.96 seconds.
 
-All four duplicate-request cases passed on SQLite (4 passed in 21.55 seconds)
-and PostgreSQL (4 passed in 20.05 seconds). The full-suite results above predate
-these four cases.
+The full-suite results include all eight duplicate-request cases. The two
+owner-crash cases require PostgreSQL; the other six also run on SQLite.

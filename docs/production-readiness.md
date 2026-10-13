@@ -26,11 +26,14 @@ with and without a worker crash. Lost-acknowledgment tests verify reuse after a
 step commit is visible to a separate session but its response is withheld.
 Duplicate root requests are covered within one process and across separate
 executors: starts against an existing pending history execute one body, and
-changed inputs reuse the original result. First-creation races and owner crashes
-during duplicate starts still need tests. Services requiring input-conflict
+changed inputs reuse the original result. Two workers also race first creation
+after SDK initialization; either input may win, but both receive one result.
+PostgreSQL tests kill the original owner with duplicate callers waiting, recover
+its history, and verify reuse of the original input. Larger contention samples
+and crashes at other boundaries remain untested. Services requiring input-conflict
 rejection need an atomic request-identity binding at their boundary.
-Next tests need to cover long-duration outages and crashes during cancellation. Identical-input task identity
-remains an open question.
+Next tests need to cover long-duration outages and crashes during cancellation.
+Identical-input task identity remains an open question.
 
 Ordinary errors, transient/exhausted retries, backoff crashes, per-attempt timeouts,
 and recursive cancellation of a preemptible async leaf have focused tests. Parallel

@@ -97,7 +97,15 @@ read followed by a write leaves concurrent conflicting requests unchecked. Inclu
 the graph and execution options in that identity when they affect the request.
 The adapter currently supplies no request store or input-conflict rejection API.
 
-The cross-process tests start duplicates after the original node has entered.
-They verify a single body execution and the original result on SQLite and
-PostgreSQL, including conflicting inputs. First-creation races and owner failure
-during duplicate starts require separate tests.
+Cross-process tests cover duplicates against a pending history and two workers
+racing first creation on SQLite and PostgreSQL. With conflicting inputs, either
+creator can win; every caller receives that winner's result. Two PostgreSQL cases
+kill the original owner while duplicate callers wait, then recover its history.
+The unfinished node executes again using the original input, even when waiting
+callers supplied different inputs. Duplicate starts alone do not declare a dead
+executor or trigger its recovery.
+
+Initialize the SQLite schema before launching concurrent workers. Concurrent
+cold launches against an empty database exposed a migration-table creation race
+in DBOS 3.2.0. The workflow creation tests serialize SDK initialization and release
+both initialized workers at the start barrier.
