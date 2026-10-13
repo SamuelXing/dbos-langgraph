@@ -24,9 +24,11 @@ executors; fencing stored results does not fence external tool effects.
 Proxy tests cover a three-second connection-path outage during result commitment,
 with and without a worker crash. Lost-acknowledgment tests verify reuse after a
 step commit is visible to a separate session but its response is withheld.
-Duplicate root requests are covered within one process: concurrent starts execute
-one body, and changed inputs reuse the original result. Add cross-process tests
-and an explicit request-identity policy before relying on IDs at a service boundary.
+Duplicate root requests are covered within one process and across separate
+executors: starts against an existing pending history execute one body, and
+changed inputs reuse the original result. First-creation races and owner crashes
+during duplicate starts still need tests. Services requiring input-conflict
+rejection need an atomic request-identity binding at their boundary.
 Next tests need to cover long-duration outages and crashes during cancellation. Identical-input task identity
 remains an open question.
 

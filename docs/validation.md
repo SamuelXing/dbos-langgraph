@@ -34,7 +34,11 @@ Two cases start eight concurrent requests in one process while the original node
 is held, then reuse the ID through start and ainvoke after completion. Identical
 and changed inputs both return the original result; the node body runs once.
 These tests characterize DBOS first-input behavior, not input-conflict rejection.
-Cross-process duplicate starts remain untested.
+Two more cases hold an original node while two separate executors start its root
+ID with identical or changed inputs. Both callers receive the original result,
+and audit files across all processes contain one body execution. These cases
+establish reuse of an existing pending history; they do not race the first
+creation of an ID or crash its owner during duplicate starts.
 
 ## PostgreSQL fault checks
 
@@ -103,6 +107,6 @@ promise exactly-once external side effects.
 The acknowledgment-loss cases also passed a focused run requiring proof that the
 relay held the server response: 2 passed in 7.96 seconds.
 
-The duplicate-request cases passed on SQLite (2 passed in 6.76 seconds) and
-PostgreSQL (2 passed in 6.06 seconds). The full-suite results above predate these
-two cases.
+All four duplicate-request cases passed on SQLite (4 passed in 21.55 seconds)
+and PostgreSQL (4 passed in 20.05 seconds). The full-suite results above predate
+these four cases.
