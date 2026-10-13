@@ -109,3 +109,30 @@ Initialize the SQLite schema before launching concurrent workers. Concurrent
 cold launches against an empty database exposed a migration-table creation race
 in DBOS 3.2.0. The workflow creation tests serialize SDK initialization and release
 both initialized workers at the start barrier.
+
+
+## Interrupted cancellation
+
+Call DBOS.cancel_workflow_async(root_id, cancel_children=True) to cancel the graph
+and its child histories. In DBOS 3.2.0, recursive cancellation commits each level
+separately. A cancelled root does not prove that every descendant is cancelled.
+
+A crash probe holds the SDK after the root transaction commits and before it
+finds the children. After SIGKILL, a replacement observes a CANCELLED root and a
+PENDING child. Repeating recursive cancellation before requesting dead-executor
+recovery closes that gap. The root and child remain CANCELLED, repeated result
+reads raise DBOSAwaitedWorkflowCancelledError, and the node body does not rerun.
+If a cancellation request is interrupted, retain its root ID and retry the full
+recursive request before recovering that executor's histories. The adapter does
+not store cancellation intent or automatically retry an interrupted request.
+
+A second probe waits for recursive cancellation to return and holds a preemptible
+node inside its finally block. Killing the process during that cleanup leaves
+the root and child CANCELLED on restart. The cleanup does not resume. Put required
+cleanup effects in a separately tracked, retryable operation; a node's finally
+block alone cannot guarantee their completion across process death.
+
+These cases pass on SQLite and PostgreSQL. The gap probe intercepts a private SDK
+storage helper only in the test process. They cover one child and explicit request
+retry, not arbitrary hierarchy depth, automatic cancellation reconciliation, or
+rollback of external effects.

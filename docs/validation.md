@@ -82,6 +82,13 @@ Two backoff crash cases verify that an unfinished step starts a fresh retry budg
 on recovery. A parallel failure case checks interrupted-child cancellation and
 restarts the worker to verify the child is not revived.
 
+Two cancellation crash cases kill a worker between root and child cancellation
+transactions or inside leaf cleanup after recursive cancellation returns. The
+replacement retries recursive cancellation before requesting recovery and checks
+root/child status, repeated result errors, and the persistent body audit. The
+transaction-gap probe intercepts DBOS's private child lookup in the test worker;
+the installed adapter does not call that helper. Interrupted cleanup is not resumed.
+
 ## Running the checks
 
 ```sh
@@ -120,3 +127,7 @@ relay held the server response: 2 passed in 7.96 seconds.
 
 The full-suite results include all eight duplicate-request cases. The two
 owner-crash cases require PostgreSQL; the other six also run on SQLite.
+
+The cancellation crash, failure-policy, and sibling-failure checks passed together
+on SQLite (8 passed in 30.12 seconds) and PostgreSQL (8 passed in 24.19 seconds).
+The full-suite results above predate the two cancellation crash cases.

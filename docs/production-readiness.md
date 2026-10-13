@@ -32,13 +32,17 @@ PostgreSQL tests kill the original owner with duplicate callers waiting, recover
 its history, and verify reuse of the original input. Larger contention samples
 and crashes at other boundaries remain untested. Services requiring input-conflict
 rejection need an atomic request-identity binding at their boundary.
-Next tests need to cover long-duration outages and crashes during cancellation.
+Next tests need to cover long-duration outages and automatic cancellation
+reconciliation after an interrupted control request.
 Identical-input task identity remains an open question.
 
 Ordinary errors, transient/exhausted retries, backoff crashes, per-attempt timeouts,
 and recursive cancellation of a preemptible async leaf have focused tests. Parallel
 failure tests cover one interrupted sibling and its status after restart. Arbitrary
-tool cancellation and failures during cancellation cleanup remain untested.
+tool cancellation remains untested. Crash probes cover the gap between root and
+child cancellation and interruption inside leaf cleanup. Explicit cancellation
+retry closes the tested gap; interrupted cleanup is not resumed. Deeper hierarchies
+and durable cleanup operations still need coverage.
 
 ## LangGraph features
 
