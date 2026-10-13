@@ -118,3 +118,33 @@ async def test_reconciliation_requires_explicit_dead_executor_ids(owners):
 
     with pytest.raises(ValueError, match="confirmed-dead"):
         await DurableGraph(workflow).reconcile_cancellations(owners)
+
+
+@pytest.mark.parametrize(
+    "metadata", [{}, {"execute_in": "activity"}, {"execute_in": "step", "step_options": {}}]
+)
+def test_existing_graph_rejects_invalid_execution_metadata_without_mutation(metadata):
+    async def node(state):
+        return {}
+
+    builder = StateGraph(dict)
+    builder.add_node("node", node, metadata=metadata)
+    original = builder.nodes["node"]
+    with pytest.raises((ValueError, TypeError)):
+        DBOSLangGraphPlugin("metadata-validation").register_graph(builder)
+    assert builder.nodes["node"] is original
+    assert not builder.compiled
+
+
+@pytest.mark.asyncio
+async def test_non_json_context_is_rejected_before_workflow_execution():
+    from dbos_langgraph import DurableGraph
+
+    async def workflow(*args, **kwargs):
+        pytest.fail("invalid context must not start a workflow")
+
+    app = DurableGraph(workflow)
+    with pytest.raises(TypeError, match="JSON"):
+        await app.start({}, context={"object": object()})
+    with pytest.raises(TypeError, match="JSON"):
+        await app.ainvoke({}, context={"object": object()})

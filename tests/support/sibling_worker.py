@@ -82,8 +82,14 @@ async def run(identity, inspect_only=False):
         stopped_at_failure = stopped.is_set()
         release.set()
         await asyncio.wait_for(stopped.wait(), 10)
-        await asyncio.sleep(0.1)
-        status = await DBOS.get_workflow_status_async(child_id)
+        # Root failure can be observed before the sibling's cancellation commits.
+        # Wait for the durable status, rather than assuming a fixed database latency.
+        async with asyncio.timeout(10):
+            while True:
+                status = await DBOS.get_workflow_status_async(child_id)
+                if status.status != "PENDING":
+                    break
+                await asyncio.sleep(0.01)
         print(
             json.dumps(
                 {

@@ -80,7 +80,9 @@ tests cover registration, invocation limits, the JSON state schema, and StepOpti
 
 Two backoff crash cases verify that an unfinished step starts a fresh retry budget
 on recovery. A parallel failure case checks interrupted-child cancellation and
-restarts the worker to verify the child is not revived.
+restarts the worker to verify the child is not revived. Root failure can be
+observed before sibling cancellation commits; the fixture waits for terminal
+child status with a bounded deadline instead of assuming a fixed database latency.
 
 Four cancellation crash cases kill a worker between root and child cancellation
 transactions or inside leaf cleanup after recursive cancellation returns. The
@@ -97,6 +99,20 @@ coordinator discovers the request under either dead executor and completes it
 without another node-body execution. An unrelated executor filter returns no
 requests. The cancellation worker example also has a local start/cancel/reconcile
 smoke check.
+
+## Existing builders and runtime context
+
+A LangChain prompt node and a following held node run through register_graph on
+an existing typed StateGraph. The test checks that the original builder remains
+uncompiled and its node runnables are unchanged. JSON context reaches both nodes;
+mutation inside the first node does not change the second node's context. After
+SIGKILL, the committed prompt result is reused and only the unfinished body runs
+again. A changed START route that alters context must produce ReplayMismatchError
+without rerunning the committed prompt node.
+
+Registration validation rejects missing/invalid execution metadata. Non-JSON
+context is rejected before starting a root workflow. The runtime_context.py
+example was also executed locally without model credentials.
 
 ## Running the checks
 
@@ -124,8 +140,8 @@ promise exactly-once external side effects.
 
 | Check | Result |
 | --- | --- |
-| PostgreSQL suite | 72 passed, 223.00 seconds |
-| SQLite suite | 63 passed, 9 PostgreSQL-only cases skipped, 201.52 seconds |
+| PostgreSQL suite | 78 passed, 216.89 seconds |
+| SQLite suite | 69 passed, 9 PostgreSQL-only cases skipped, 201.92 seconds |
 | Ruff lint and formatting | Passed |
 | Strict mypy | Passed |
 | Source distribution and wheel build | Passed |
@@ -140,4 +156,4 @@ owner-crash cases require PostgreSQL; the other six also run on SQLite.
 The full-suite results include manual cancellation retry, stored cancellation
 request recovery, missing-target rejection, and invalid request-ID validation.
 The wheel was installed with its dependencies in a fresh environment and imported
-outside the checkout; DurableGraph.request_cancel and reconcile_cancellations were available.
+outside the checkout; DurableGraph.request_cancel, reconcile_cancellations, and register_graph were available.

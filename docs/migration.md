@@ -16,23 +16,37 @@ builder.add_node("tools", tools_node)
 app = builder.compile(checkpointer=checkpointer)
 ```
 
-Change registration and compilation:
+Keep ordinary node registration and declare DBOS execution in metadata:
 
 ```python
 from dbos_langgraph import DBOSLangGraphPlugin
 
-plugin = DBOSLangGraphPlugin("agent_v1")
-plugin.add_node(builder, "agent", agent_node)
-plugin.add_node(builder, "tools", tools_node)
+builder.add_node("agent", agent_node, metadata={"execute_in": "step"})
+builder.add_node("tools", tools_node, metadata={"execute_in": "step"})
 # Keep the edges, conditional routing, and reducers.
-app = plugin.compile(builder)
+app = DBOSLangGraphPlugin("agent_v1").register_graph(builder)
 ```
 
-Every node must be registered through the plugin. Nodes must be async functions
-with one state argument and a dict update result. Convert synchronous nodes and
-remove config/runtime arguments before migration. Choose a stable graph name and
-retain compatible routing, reducer behavior, and durable-call order for pending
-histories. See [replay compatibility](replay.md).
+register_graph wraps plain async functions on a copy of an uncompiled builder.
+It preserves native node schemas, destinations, and metadata and leaves the
+original builder unchanged. Each node must explicitly choose step or workflow
+execution. Optional step_options metadata accepts StepOptions. LangGraph
+retry/cache/timeout policies and error handlers are rejected; configure retries
+and timeouts through DBOS. Runnable compositions and synchronous nodes are not
+supported yet. The extraction of callable nodes uses the pinned LangGraph internal
+wrapper; dependency upgrades need registration and recovery tests.
+
+Nodes accept state alone or state plus a parameter named runtime, including a
+keyword-only runtime parameter. Runtime.context is reconstructed from the JSON
+context supplied to start or ainvoke. Use a dict or TypedDict context schema;
+coercion into dataclass or Pydantic context objects is not supported yet.
+Every node gets its own copy, so context
+mutation does not communicate state updates between nodes. Config injection and
+other Runtime fields remain unsupported. Use dict updates and reducers for graph
+state. The manual plugin.add_node and plugin.compile path remains available.
+
+Choose a stable graph name and retain compatible routing, reducer behavior, and
+durable-call order for pending histories. See [replay compatibility](replay.md).
 
 ## Adapt state and external calls
 
@@ -59,7 +73,7 @@ and launch the SDK as shown in [the basic example](../examples/basic.py). Then:
 from dbos import SetWorkflowID
 
 with SetWorkflowID("request-123"):
-    handle = await app.start(initial_state)
+    handle = await app.start(initial_state, context={"user_id": "alice"})
 result = await handle.get_result()
 ```
 
@@ -76,11 +90,12 @@ for executor ownership, cancellation ordering, and recovery prerequisites.
 ## Features that need another migration path
 
 The adapter is not a CompiledStateGraph replacement. It does not implement
-interrupt/resume, streaming, subgraphs, runtime/context injection, checkpoint
+interrupt/resume, streaming, subgraphs, config injection, checkpoint
 history inspection, or time travel. Applications using those features need to keep
 their existing runtime until equivalent behavior has implementation and recovery
 tests. Prebuilt agents are not accepted directly; this API requires explicit node
-registration in a StateGraph builder.
+registration in a StateGraph builder. A runnable LangChain prompt example is
+[runtime_context.py](../examples/runtime_context.py); it needs no model credentials.
 
 Start with one isolated graph and new workflow IDs. Test its reducers and routing
 against the existing implementation, then inject process crashes around each

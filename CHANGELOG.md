@@ -2,6 +2,9 @@
 
 ## 0.1.0a2 (unreleased)
 
+- Register existing StateGraph builders through node execution metadata.
+- Reconstruct JSON runtime context in durable nodes and include it in replay checks.
+
 - Discover and reconcile unfinished cancellation requests for confirmed-dead executors.
 - Add a cancellation coordinator example and StateGraph migration guide.
 

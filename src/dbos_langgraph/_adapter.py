@@ -4,16 +4,19 @@ import asyncio
 import inspect
 import re
 from collections.abc import Awaitable, Callable, Coroutine
-from copy import deepcopy
-from typing import Any, Literal, TypedDict
+from copy import copy, deepcopy
+from dataclasses import replace
+from typing import Any, Literal, TypedDict, cast
 
 from dbos import DBOS, WorkflowHandleAsync
+from langgraph._internal._runnable import RunnableCallable
 from langgraph.graph import StateGraph
+from langgraph.runtime import Runtime
 
 from ._policy import StepOptions
 from ._state import fingerprint
 
-Node = Callable[[Any], Awaitable[dict[str, Any]]]
+Node = Callable[..., Awaitable[dict[str, Any]]]
 ExecutionMode = Literal["step", "workflow"]
 
 
@@ -39,13 +42,21 @@ class DurableGraph:
         self._cancellation = cancellation
         self._cancellation_name = cancellation_name
 
-    async def ainvoke(self, state: Any, *, recursion_limit: int = 1000) -> Any:
+    async def ainvoke(self, state: Any, *, recursion_limit: int = 1000, context: Any = None) -> Any:
         self._validate_limit(recursion_limit)
-        return await self.workflow(state, recursion_limit)
+        if context is None:
+            return await self.workflow(state, recursion_limit)
+        fingerprint(context)
+        return await self.workflow(state, recursion_limit, context=deepcopy(context))
 
-    async def start(self, state: Any, *, recursion_limit: int = 1000) -> Any:
+    async def start(self, state: Any, *, recursion_limit: int = 1000, context: Any = None) -> Any:
         self._validate_limit(recursion_limit)
-        return await DBOS.start_workflow_async(self.workflow, state, recursion_limit)
+        if context is None:
+            return await DBOS.start_workflow_async(self.workflow, state, recursion_limit)
+        fingerprint(context)
+        return await DBOS.start_workflow_async(
+            self.workflow, state, recursion_limit, context=deepcopy(context)
+        )
 
     async def request_cancel(self, workflow_id: str) -> WorkflowHandleAsync[None]:
         """Start an independent durable request to cancel this graph and its children.
@@ -145,14 +156,34 @@ class DBOSLangGraphPlugin:
         if not inspect.iscoroutinefunction(function):
             raise TypeError("async nodes are required")
         parameters = list(inspect.signature(function).parameters.values())
-        if len(parameters) != 1 or parameters[0].kind not in (
-            inspect.Parameter.POSITIONAL_ONLY,
-            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        positional = (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+        accepts_runtime = (
+            len(parameters) == 2
+            and parameters[1].name == "runtime"
+            and parameters[1].kind
+            in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+        )
+        if (
+            not parameters
+            or parameters[0].kind not in positional
+            or (len(parameters) != 1 and not accepts_runtime)
         ):
-            raise TypeError("nodes must accept only state; config/runtime injection is unsupported")
+            raise TypeError(
+                "nodes must accept only state or state and runtime; config is unsupported"
+            )
 
-        async def leaf(state: Any) -> dict[str, Any]:
-            result = await function(deepcopy(state))
+        def identity(state: Any, context: Any) -> str:
+            inputs = [self.name, name, execute_in, state]
+            # Retain the fingerprint format of histories created without context.
+            if context is not None:
+                inputs.append({"context": context})
+            return fingerprint(inputs)
+
+        async def leaf(state: Any, context: Any = None) -> dict[str, Any]:
+            if accepts_runtime:
+                result = await function(deepcopy(state), runtime=Runtime(context=deepcopy(context)))
+            else:
+                result = await function(deepcopy(state))
             if not isinstance(result, dict):
                 raise TypeError("nodes must return dict state updates")
             fingerprint(result)
@@ -172,10 +203,14 @@ class DBOSLangGraphPlugin:
             else leaf
         )
 
-        async def isolated_node(state: Any) -> _NodeResult:
-            identity = fingerprint([self.name, name, execute_in, state])
+        async def isolated_node(state: Any, context: Any = None) -> _NodeResult:
+            invocation_identity = identity(state, context)
             try:
-                update = await durable_leaf(state)
+                update = (
+                    await durable_leaf(state)
+                    if context is None
+                    else await durable_leaf(state, context)
+                )
             except asyncio.CancelledError:
                 # Pregel cancels sibling coroutines on failure. Close their durable
                 # histories too, so startup recovery cannot revive abandoned nodes.
@@ -183,15 +218,20 @@ class DBOSLangGraphPlugin:
                 if workflow_id is not None:
                     await DBOS.cancel_workflow_async(workflow_id, cancel_children=True)
                 raise
-            return {"identity": identity, "update": update}
+            return {"identity": invocation_identity, "update": update}
 
         node_workflow = DBOS.workflow(name=f"dbos_langgraph.{self.name}.{name}.workflow")(
             isolated_node
         )
 
-        async def node(state: Any) -> dict[str, Any]:
-            expected = fingerprint([self.name, name, execute_in, state])
-            envelope = await node_workflow(state)
+        async def node(state: Any, runtime: Runtime[Any]) -> dict[str, Any]:
+            context = runtime.context
+            expected = identity(state, context)
+            envelope = (
+                await node_workflow(state)
+                if context is None
+                else await node_workflow(state, context)
+            )
             if "identity" not in envelope or "update" not in envelope:
                 raise ReplayMismatchError(
                     f"unsupported history format for {self.name}/{name}; "
@@ -207,10 +247,60 @@ class DBOSLangGraphPlugin:
             self._node_completed(name, state, result)
             return result
 
-        builder.add_node(name, node)
+        builder.add_node(name, node, input_schema=builder.state_schema)
         self._builder = builder
         self._nodes.add(name)
         return self
+
+    def register_graph(self, builder: StateGraph[Any, Any, Any, Any]) -> DurableGraph:
+        """Wrap existing async callable nodes on a copy of an uncompiled builder.
+
+        Each node must declare execute_in in metadata. Runnable compositions and
+        LangGraph retry/cache/timeout policies require separate integrations.
+        """
+        if builder.compiled:
+            raise ValueError("register an uncompiled builder")
+        if self._compiled or self._nodes:
+            raise ValueError("register an existing graph on a fresh plugin instance")
+        registrations: list[tuple[str, Node, ExecutionMode, StepOptions | None]] = []
+        for name, spec in builder.nodes.items():
+            self._validate_name(name)
+            # This extraction is tied to the pinned LangGraph version. Accept only
+            # its plain callable wrapper, never a composed Runnable's inner function.
+            if not isinstance(spec.runnable, RunnableCallable) or spec.runnable.kwargs:
+                raise TypeError("existing nodes must be plain async functions")
+            function = spec.runnable.afunc
+            if function is None or not inspect.iscoroutinefunction(function):
+                raise TypeError("existing nodes must be plain async functions")
+            if (
+                spec.retry_policy
+                or spec.cache_policy
+                or spec.timeout is not None
+                or spec.is_error_handler
+                or spec.error_handler_node is not None
+            ):
+                raise ValueError(
+                    "configure DBOS policies; LangGraph retry/cache/timeout unsupported"
+                )
+            metadata = spec.metadata or {}
+            mode = metadata.get("execute_in")
+            if mode not in ("step", "workflow"):
+                raise ValueError(f"node {name} must declare execute_in in metadata")
+            options = metadata.get("step_options")
+            if options is not None and not isinstance(options, StepOptions):
+                raise TypeError("step_options metadata must be StepOptions")
+            registrations.append((name, cast(Node, function), mode, options))
+        wrapped = copy(builder)
+        wrapped.nodes = dict(builder.nodes)
+        wrapped.schemas = dict(builder.schemas)
+        wrapped.channels = dict(builder.channels)
+        wrapped.managed = dict(builder.managed)
+        for name, function, mode, options in registrations:
+            original = wrapped.nodes.pop(name)
+            self.add_node(wrapped, name, function, execute_in=mode, step_options=options)
+            # Keep the native node schema, destinations, and scheduling metadata.
+            wrapped.nodes[name] = replace(original, runnable=wrapped.nodes[name].runnable)
+        return self.compile(wrapped)
 
     def _node_completed(self, name: str, state: Any, result: dict[str, Any]) -> None:
         """Test-only observation hook. Executes again on replay; never a durable action."""
@@ -224,8 +314,10 @@ class DBOSLangGraphPlugin:
             raise ValueError("one builder per plugin instance")
         graph = builder.compile()
 
-        async def invoke(state: Any, recursion_limit: int) -> Any:
-            result = await graph.ainvoke(state, {"recursion_limit": recursion_limit})
+        async def invoke(state: Any, recursion_limit: int, context: Any = None) -> Any:
+            result = await graph.ainvoke(
+                state, {"recursion_limit": recursion_limit}, context=context
+            )
             if isinstance(result, dict) and "__interrupt__" in result:
                 raise NotImplementedError("interrupt/resume is not supported")
             return result

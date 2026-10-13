@@ -111,6 +111,14 @@ in DBOS 3.2.0. The workflow creation tests serialize SDK initialization and rele
 both initialized workers at the start barrier.
 
 
+## Root failure and sibling cancellation
+
+Pregel can report a root failure before an interrupted sibling's cancellation has
+committed. The adapter requests cancellation of that child's history, but the
+root and child do not change status atomically. Observe descendant status before
+assuming cancellation is complete. If the executor dies during cleanup, use a
+durable recursive cancellation request and reconciliation before general recovery.
+
 ## Interrupted cancellation
 
 Call DBOS.cancel_workflow_async(root_id, cancel_children=True) to cancel the graph

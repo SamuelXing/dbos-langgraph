@@ -92,6 +92,12 @@ child workflow. Default `execute_in="step"` wraps its body in one durable step.
 `execute_in="workflow"` supports explicit DBOS multistep orchestration inside that
 child; all nondeterministic operations must be in steps.
 
+Existing builders can use metadata={"execute_in": "step"} on each plain async
+node and app = plugin.register_graph(builder). The builder is copied before wrapping.
+Pass JSON context through app.start(state, context=...) or app.ainvoke(...).
+Nodes may accept runtime and read runtime.context. See
+[the context example](examples/runtime_context.py).
+
 Node inputs and updates must be JSON-compatible values with string object keys.
 Recovered results carry an input fingerprint; a changed invocation raises
 `ReplayMismatchError`. See [replay and code changes](docs/replay.md) for the exact
@@ -118,7 +124,7 @@ fixed cycles and joins; tested simple Send fan-out; isolated multistep nodes.
 Sync nodes, config/runtime injection, unwrapped nodes, and invalid registration are rejected.
 This facade is not a drop-in CompiledStateGraph replacement.
 
-HITL, streaming, Functional API, runtime/store/context injection, general subgraphs,
+HITL, streaming, Functional API, config injection and Runtime fields other than context, general subgraphs,
 dynamic graph changes, full cancellation/retry policy translation, and upgrades are
 not supported or validated. Do not use them under assumptions of durable compatibility.
 Tests use SIGKILL and actual node-body audit counts; probes live only under tests/support.

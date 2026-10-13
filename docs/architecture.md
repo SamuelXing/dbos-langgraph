@@ -23,3 +23,14 @@ can run again, so external writes need idempotency or suitable transactions.
 Test fixtures live under `tests/support` and are excluded from the wheel. They
 include blocking probes, execution counters, and a pure executor used to check
 reconstructed state independently of Pregel.
+
+
+Existing builders are registered through register_graph, which copies the builder
+and replaces each supported callable node's runnable while retaining its native
+schema and metadata. This uses the pinned LangGraph internal RunnableCallable
+wrapper; composed runnables are rejected rather than extracting an inner function.
+
+JSON runtime context is part of the root input and the node replay fingerprint.
+The leaf reconstructs Runtime.context from an isolated copy. Other Runtime fields
+are not forwarded. Histories created without context retain their original root
+argument shape, child argument shape, and input fingerprint format.
