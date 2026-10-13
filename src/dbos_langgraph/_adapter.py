@@ -1,5 +1,6 @@
 """Explicit registration of durable nodes in native LangGraph graphs."""
 
+import asyncio
 import inspect
 import re
 from collections.abc import Awaitable, Callable, Coroutine
@@ -115,7 +116,16 @@ class DBOSLangGraphPlugin:
 
         async def isolated_node(state: Any) -> _NodeResult:
             identity = fingerprint([self.name, name, execute_in, state])
-            return {"identity": identity, "update": await durable_leaf(state)}
+            try:
+                update = await durable_leaf(state)
+            except asyncio.CancelledError:
+                # Pregel cancels sibling coroutines on failure. Close their durable
+                # histories too, so startup recovery cannot revive abandoned nodes.
+                workflow_id = DBOS.workflow_id
+                if workflow_id is not None:
+                    await DBOS.cancel_workflow_async(workflow_id, cancel_children=True)
+                raise
+            return {"identity": identity, "update": update}
 
         node_workflow = DBOS.workflow(name=f"dbos_langgraph.{self.name}.{name}.workflow")(
             isolated_node

@@ -2,6 +2,10 @@
 
 ## 0.1.0a2 (unreleased)
 
+- Cancel interrupted child histories when Pregel cancels a sibling coroutine.
+- Verify that backoff crashes reset unfinished-step attempt budgets.
+- Remove development-session notes from the documentation.
+
 - Add StepOptions for leaf retry attempts, backoff, timeout, and preemption.
 - Test ordinary failures, successful/exhausted retries, timeouts, and recursive
   cancellation through the SDK.
@@ -22,9 +26,7 @@ The stored node-result format changed. Recover histories created by 0.1.0a1 with
 
 ## 0.1.0a1 — unreleased
 
-- Extract the native LangGraph/DBOS adapter into an independent package.
+- Add the native LangGraph/DBOS adapter.
 - Isolate node histories with child workflows and retain native Pregel semantics.
 - Validate registration names, builder ownership, node signatures, and invocation limits.
 - Add typed package metadata, reproducible dependencies, crash fixtures, and CI configuration.
-
-No package or remote repository has been published.

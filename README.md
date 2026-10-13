@@ -3,9 +3,8 @@
 Unofficial durable execution integration for native LangGraph, backed by DBOS.
 Distribution name: `dbos-langgraph`. Import name: `dbos_langgraph`.
 
-**Status: alpha, not production-ready.** Production quality is the objective, not
-an assertion about this initial extraction. See [production readiness](docs/production-readiness.md).
-This independent project has no runtime dependency on the original prototype.
+**Status: alpha.** See [production requirements](docs/production-readiness.md)
+for the remaining recovery and deployment work.
 
 ## Development
 
@@ -95,9 +94,10 @@ dynamic graph changes, full cancellation/retry policy translation, and upgrades 
 not supported or validated. Do not use them under assumptions of durable compatibility.
 Tests use SIGKILL and actual node-body audit counts; probes live only under tests/support.
 
-## Project provenance
+## Documentation
 
-Extracted from `../durable-agent-graph-prototype`; the prototype remains intact.
-The plugin is unofficial and has not been published. English is the repository language.
-See [architecture](docs/architecture.md), [contributing](CONTRIBUTING.md), and
-[validation](docs/validation.md).
+- [Execution model](docs/architecture.md)
+- [Replay and code changes](docs/replay.md)
+- [Node failures](docs/failures.md)
+- [Test coverage](docs/validation.md)
+- [Contributing](CONTRIBUTING.md)

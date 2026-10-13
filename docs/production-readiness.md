@@ -17,12 +17,13 @@ case synchronizes recovery requests from two distinct workers for a dead worker'
 history and checks results and node-body counts.
 
 Next tests need to cover stale workers that are still running, database disconnects,
-duplicate invocations, and crashes during retries or cancellation. Identical-input task identity
+duplicate invocations, and crashes during cancellation. Identical-input task identity
 remains an open question.
 
-Ordinary errors, transient/exhausted retries, per-attempt timeouts, and recursive
-cancellation of a preemptible async leaf have focused tests. That does not cover
-parallel sibling failure or arbitrary tool cancellation.
+Ordinary errors, transient/exhausted retries, backoff crashes, per-attempt timeouts,
+and recursive cancellation of a preemptible async leaf have focused tests. Parallel
+failure tests cover one interrupted sibling and its status after restart. Arbitrary
+tool cancellation and failures during cancellation cleanup remain untested.
 
 ## LangGraph features
 
