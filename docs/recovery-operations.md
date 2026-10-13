@@ -123,8 +123,7 @@ PENDING child. Repeating recursive cancellation before requesting dead-executor
 recovery closes that gap. The root and child remain CANCELLED, repeated result
 reads raise DBOSAwaitedWorkflowCancelledError, and the node body does not rerun.
 If a cancellation request is interrupted, retain its root ID and retry the full
-recursive request before recovering that executor's histories. The adapter does
-not store cancellation intent or automatically retry an interrupted request.
+recursive request before recovering that executor's histories. A direct SDK cancellation call does not store a separate durable request.
 
 A second probe waits for recursive cancellation to return and holds a preemptible
 node inside its finally block. Killing the process during that cleanup leaves
@@ -136,3 +135,32 @@ These cases pass on SQLite and PostgreSQL. The gap probe intercepts a private SD
 storage helper only in the test process. They cover one child and explicit request
 retry, not arbitrary hierarchy depth, automatic cancellation reconciliation, or
 rollback of external effects.
+
+
+## Durable cancellation requests
+
+DurableGraph.request_cancel(target_id) starts a separate registered workflow named
+`dbos_langgraph.<graph>.cancel`. It verifies that the target exists and names this
+graph's root workflow, then invokes the SDK's recursive cancellation operation.
+The SDK records that operation only after the full cascade returns. Recovery of
+an interrupted request therefore repeats the unfinished operation.
+
+Call request_cancel outside a DBOS workflow so the control request is independent
+of the target's child hierarchy. Assign it a distinct stable ID with SetWorkflowID
+and retain that ID alongside the target ID. Request IDs have the same first-input
+reuse semantics as graph IDs: do not reuse one to cancel a different target.
+Target validation is not tenant authorization; enforce access in the calling service.
+Successful or failed target histories keep their terminal status under SDK rules.
+
+After a worker crash, register the same graph before launching the replacement.
+Use a distinct executor ID. Resume the pending control request with
+DBOS.resume_workflow_async(request_id) and await its result before requesting
+recovery of the dead executor's remaining histories. Do not resume the cancelled
+graph itself. Recovering the control request and its target children together can
+race cancellation against unfinished child execution. The adapter does not enforce
+this recovery priority or discover pending cancellation requests for a service.
+
+Crash tests resume the stored request through that public SDK API, without issuing
+a new cancellation call from the replacement. They cover the root/child transaction
+gap and a crash during cleanup, and reject a missing target. Interrupted cleanup
+still needs a separate retryable operation.

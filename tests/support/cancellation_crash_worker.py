@@ -51,8 +51,14 @@ async def run(args):
         if args.inspect:
             before_root = await DBOS.get_workflow_status_async(args.id)
             before = await DBOS.list_workflows_async(parent_workflow_id=args.id)
-            # Retry the interrupted control request before declaring the old owner dead.
-            await DBOS.cancel_workflow_async(args.id, cancel_children=True)
+            request_status = None
+            if args.durable:
+                request = await DBOS.resume_workflow_async(args.id + "-cancel")
+                await asyncio.wait_for(request.get_result(), 15)
+                request_status = (await request.get_status()).status
+            else:
+                # Retry the interrupted control request before declaring the old owner dead.
+                await DBOS.cancel_workflow_async(args.id, cancel_children=True)
             await asyncio.to_thread(DBOS._recover_pending_workflows, [args.id + "-original"])
             handle = await DBOS.retrieve_workflow_async(args.id)
             errors = []
@@ -64,9 +70,19 @@ async def run(args):
             await asyncio.sleep(0.2)
             root = await handle.get_status()
             children = await DBOS.list_workflows_async(parent_workflow_id=args.id)
+            observation = {"request": request_status} if args.durable else {}
+            if args.durable:
+                invalid = await app.request_cancel(args.id + "-missing")
+                try:
+                    await invalid.get_result()
+                except ValueError:
+                    observation["missing_target"] = "rejected"
+                else:
+                    raise AssertionError("a missing target must fail the request")
             print(
                 json.dumps(
                     {
+                        **observation,
                         "before_root": before_root.status,
                         "before": [child.status for child in before],
                         "root": root.status,
@@ -92,7 +108,12 @@ async def run(args):
                 return original(ids)
 
             instance._sys_db._get_direct_children = held_children
-        await DBOS.cancel_workflow_async(args.id, cancel_children=True)
+        if args.durable:
+            with SetWorkflowID(args.id + "-cancel"):
+                request = await app.request_cancel(args.id)
+            await request.get_result()
+        else:
+            await DBOS.cancel_workflow_async(args.id, cancel_children=True)
         (directory / "cancel-returned").touch()
         await asyncio.Event().wait()
     finally:
@@ -105,4 +126,5 @@ if __name__ == "__main__":
     parser.add_argument("--directory", required=True)
     parser.add_argument("--boundary", choices=["cascade", "cleanup"], required=True)
     parser.add_argument("--inspect", action="store_true")
+    parser.add_argument("--durable", action="store_true")
     asyncio.run(run(parser.parse_args()))

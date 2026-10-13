@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable, Coroutine
 from copy import deepcopy
 from typing import Any, Literal, TypedDict
 
-from dbos import DBOS
+from dbos import DBOS, WorkflowHandleAsync
 from langgraph.graph import StateGraph
 
 from ._policy import StepOptions
@@ -29,8 +29,13 @@ class ReplayMismatchError(RuntimeError):
 class DurableGraph:
     """An async DBOS workflow facade, not a drop-in CompiledStateGraph."""
 
-    def __init__(self, workflow: Callable[..., Coroutine[Any, Any, Any]]) -> None:
+    def __init__(
+        self,
+        workflow: Callable[..., Coroutine[Any, Any, Any]],
+        cancellation: Callable[[str], Coroutine[Any, Any, None]] | None = None,
+    ) -> None:
         self.workflow = workflow
+        self._cancellation = cancellation
 
     async def ainvoke(self, state: Any, *, recursion_limit: int = 1000) -> Any:
         self._validate_limit(recursion_limit)
@@ -39,6 +44,20 @@ class DurableGraph:
     async def start(self, state: Any, *, recursion_limit: int = 1000) -> Any:
         self._validate_limit(recursion_limit)
         return await DBOS.start_workflow_async(self.workflow, state, recursion_limit)
+
+    async def request_cancel(self, workflow_id: str) -> WorkflowHandleAsync[None]:
+        """Start an independent durable request to cancel this graph and its children.
+
+        Call outside a DBOS workflow. SetWorkflowID may assign a distinct request
+        ID; await the returned handle to observe completion of stored cancellation.
+        """
+        if not isinstance(workflow_id, str) or not workflow_id.strip():
+            raise ValueError("workflow_id must be a nonempty string")
+        if self._cancellation is None:
+            raise ValueError("cancellation requires a graph compiled through the plugin")
+        if DBOS.workflow_id is not None:
+            raise RuntimeError("request cancellation outside a DBOS workflow")
+        return await DBOS.start_workflow_async(self._cancellation, workflow_id)
 
     @staticmethod
     def _validate_limit(limit: int) -> None:
@@ -173,5 +192,15 @@ class DBOSLangGraphPlugin:
             return result
 
         durable = DBOS.workflow(name=f"dbos_langgraph.{self.name}.graph")(invoke)
+
+        async def cancel(workflow_id: str) -> None:
+            status = await DBOS.get_workflow_status_async(workflow_id)
+            if status is None or status.name != f"dbos_langgraph.{self.name}.graph":
+                raise ValueError("cancellation target must be an existing root of this graph")
+            # The SDK records this operation only after the full cascade returns.
+            # An interrupted request therefore retries the unfinished cascade.
+            await DBOS.cancel_workflow_async(workflow_id, cancel_children=True)
+
+        cancellation = DBOS.workflow(name=f"dbos_langgraph.{self.name}.cancel")(cancel)
         self._compiled = True
-        return DurableGraph(durable)
+        return DurableGraph(durable, cancellation)

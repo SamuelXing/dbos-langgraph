@@ -40,8 +40,8 @@ Ordinary errors, transient/exhausted retries, backoff crashes, per-attempt timeo
 and recursive cancellation of a preemptible async leaf have focused tests. Parallel
 failure tests cover one interrupted sibling and its status after restart. Arbitrary
 tool cancellation remains untested. Crash probes cover the gap between root and
-child cancellation and interruption inside leaf cleanup. Explicit cancellation
-retry closes the tested gap; interrupted cleanup is not resumed. Deeper hierarchies
+child cancellation and interruption inside leaf cleanup. A separate durable cancellation request can close the tested gap when recovered
+before target histories; interrupted cleanup is not resumed. Deeper hierarchies
 and durable cleanup operations still need coverage.
 
 ## LangGraph features

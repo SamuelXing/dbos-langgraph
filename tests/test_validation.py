@@ -93,3 +93,16 @@ def test_workflow_nodes_cannot_take_leaf_step_options():
         DBOSLangGraphPlugin("policy-validation").add_node(
             StateGraph(dict), "node", node, execute_in="workflow", step_options=StepOptions()
         )
+
+
+@pytest.mark.parametrize("workflow_id", ["", "   ", None, 42])
+@pytest.mark.asyncio
+async def test_invalid_cancellation_target_never_starts_request(workflow_id):
+    from dbos_langgraph import DurableGraph
+
+    async def workflow(*args):
+        pytest.fail("invalid cancellation must not start a workflow")
+
+    graph = DurableGraph(workflow)
+    with pytest.raises(ValueError, match="nonempty string"):
+        await graph.request_cancel(workflow_id)

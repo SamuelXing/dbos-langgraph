@@ -2,6 +2,9 @@
 
 ## 0.1.0a2 (unreleased)
 
+- Add DurableGraph.request_cancel with a separate durable cancellation history.
+- Verify recovery after interrupted recursive cancellation and leaf cleanup.
+
 - Verify committed node-result reuse after a lost COMMIT acknowledgment, both with
   a live worker and with a crash before confirmation.
 

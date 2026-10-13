@@ -82,9 +82,10 @@ Two backoff crash cases verify that an unfinished step starts a fresh retry budg
 on recovery. A parallel failure case checks interrupted-child cancellation and
 restarts the worker to verify the child is not revived.
 
-Two cancellation crash cases kill a worker between root and child cancellation
+Four cancellation crash cases kill a worker between root and child cancellation
 transactions or inside leaf cleanup after recursive cancellation returns. The
-replacement retries recursive cancellation before requesting recovery and checks
+replacement either retries recursive cancellation or resumes a stored durable
+request before requesting target recovery, then checks
 root/child status, repeated result errors, and the persistent body audit. The
 transaction-gap probe intercepts DBOS's private child lookup in the test worker;
 the installed adapter does not call that helper. Interrupted cleanup is not resumed.
@@ -115,8 +116,8 @@ promise exactly-once external side effects.
 
 | Check | Result |
 | --- | --- |
-| PostgreSQL suite | 56 passed, 188.52 seconds |
-| SQLite suite | 47 passed, 9 PostgreSQL-only cases skipped, 163.24 seconds |
+| PostgreSQL suite | 64 passed, 184.64 seconds |
+| SQLite suite | 55 passed, 9 PostgreSQL-only cases skipped, 163.98 seconds |
 | Ruff lint and formatting | Passed |
 | Strict mypy | Passed |
 | Source distribution and wheel build | Passed |
@@ -128,6 +129,7 @@ relay held the server response: 2 passed in 7.96 seconds.
 The full-suite results include all eight duplicate-request cases. The two
 owner-crash cases require PostgreSQL; the other six also run on SQLite.
 
-The cancellation crash, failure-policy, and sibling-failure checks passed together
-on SQLite (8 passed in 30.12 seconds) and PostgreSQL (8 passed in 24.19 seconds).
-The full-suite results above predate the two cancellation crash cases.
+The full-suite results include manual cancellation retry, stored cancellation
+request recovery, missing-target rejection, and invalid request-ID validation.
+The wheel was installed with its dependencies in a fresh environment and imported
+outside the checkout; DurableGraph.request_cancel was available.

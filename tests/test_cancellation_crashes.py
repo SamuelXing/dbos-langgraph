@@ -11,8 +11,9 @@ import pytest
 from tests.support.postgres import stop, wait_for
 
 
+@pytest.mark.parametrize("durable", [False, True], ids=["manual-retry", "durable-request"])
 @pytest.mark.parametrize("boundary", ["cascade", "cleanup"])
-def test_crash_during_recursive_cancellation(tmp_path, boundary):
+def test_crash_during_recursive_cancellation(tmp_path, boundary, durable):
     identity = "cancel-crash-" + uuid.uuid4().hex
     env = {
         **os.environ,
@@ -31,6 +32,8 @@ def test_crash_during_recursive_cancellation(tmp_path, boundary):
         "--boundary",
         boundary,
     ]
+    if durable:
+        command.append("--durable")
     log = tmp_path / "original.log"
     with log.open("w") as stream:
         worker = subprocess.Popen(command, env=env, stdout=stream, stderr=subprocess.STDOUT)
@@ -52,7 +55,7 @@ def test_crash_during_recursive_cancellation(tmp_path, boundary):
     (tmp_path / "restart.log").write_text(restarted.stdout + restarted.stderr)
     assert restarted.returncode == 0, restarted.stdout + restarted.stderr
     result = json.loads(restarted.stdout.strip().splitlines()[-1])
-    assert result == {
+    expected = {
         "before_root": "CANCELLED",
         "before": ["PENDING" if boundary == "cascade" else "CANCELLED"],
         "root": "CANCELLED",
@@ -60,4 +63,8 @@ def test_crash_during_recursive_cancellation(tmp_path, boundary):
         "errors": ["DBOSAwaitedWorkflowCancelledError"] * 2,
         "entered": False,
     }
+    if durable:
+        expected["request"] = "SUCCESS"
+        expected["missing_target"] = "rejected"
+    assert result == expected
     assert (tmp_path / "calls").read_text().splitlines() == ["entered"]
