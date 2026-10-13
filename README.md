@@ -56,6 +56,10 @@ Register every graph and node once per process before `DBOS.launch()`. After
 configuring and launching DBOS, call `await app.start(state)` to obtain a workflow
 handle, or `await app.ainvoke(state)` to invoke directly. Set a stable workflow ID
 with DBOS `SetWorkflowID`; retrieve after restart with `DBOS.retrieve_workflow_async`.
+A workflow ID identifies one request. DBOS keeps its first input: reusing that ID
+with different state returns the original result without rejecting the changed
+input. Use a new ID for a new request, or validate request identity in your service.
+The node replay guard does not validate duplicate root requests.
 A complete runnable example is [examples/basic.py](examples/basic.py).
 
 ## Execution contract

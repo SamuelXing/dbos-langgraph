@@ -28,6 +28,14 @@ The competing-worker harness calls DBOS._recover_pending_workflows to exercise t
 SDK recovery-service path. The installed adapter does not call that internal API.
 Both workers must retrieve the expected result without unexpected body executions.
 
+## Duplicate requests
+
+Two cases start eight concurrent requests in one process while the original node
+is held, then reuse the ID through start and ainvoke after completion. Identical
+and changed inputs both return the original result; the node body runs once.
+These tests characterize DBOS first-input behavior, not input-conflict rejection.
+Cross-process duplicate starts remain untested.
+
 ## PostgreSQL fault checks
 
 The connection test terminates only sessions tagged for that worker, then checks
@@ -94,3 +102,7 @@ promise exactly-once external side effects.
 
 The acknowledgment-loss cases also passed a focused run requiring proof that the
 relay held the server response: 2 passed in 7.96 seconds.
+
+The duplicate-request cases passed on SQLite (2 passed in 6.76 seconds) and
+PostgreSQL (2 passed in 6.06 seconds). The full-suite results above predate these
+two cases.
