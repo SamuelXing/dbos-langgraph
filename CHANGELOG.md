@@ -2,6 +2,9 @@
 
 ## 0.1.0a2 (unreleased)
 
+- Discover and reconcile unfinished cancellation requests for confirmed-dead executors.
+- Add a cancellation coordinator example and StateGraph migration guide.
+
 - Add DurableGraph.request_cancel with a separate durable cancellation history.
 - Verify recovery after interrupted recursive cancellation and leaf cleanup.
 

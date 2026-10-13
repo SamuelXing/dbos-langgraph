@@ -33,9 +33,11 @@ class DurableGraph:
         self,
         workflow: Callable[..., Coroutine[Any, Any, Any]],
         cancellation: Callable[[str], Coroutine[Any, Any, None]] | None = None,
+        cancellation_name: str | None = None,
     ) -> None:
         self.workflow = workflow
         self._cancellation = cancellation
+        self._cancellation_name = cancellation_name
 
     async def ainvoke(self, state: Any, *, recursion_limit: int = 1000) -> Any:
         self._validate_limit(recursion_limit)
@@ -58,6 +60,43 @@ class DurableGraph:
         if DBOS.workflow_id is not None:
             raise RuntimeError("request cancellation outside a DBOS workflow")
         return await DBOS.start_workflow_async(self._cancellation, workflow_id)
+
+    async def reconcile_cancellations(
+        self, dead_executor_ids: list[str], *, batch_size: int = 100
+    ) -> list[str]:
+        """Finish unfinished cancellation requests owned by confirmed-dead executors.
+
+        Run from one recovery coordinator, outside a workflow, before recovering
+        target histories. Exceptions stop reconciliation and must block that recovery.
+        """
+        if (
+            not isinstance(dead_executor_ids, list)
+            or not dead_executor_ids
+            or any(not isinstance(owner, str) or not owner.strip() for owner in dead_executor_ids)
+        ):
+            raise ValueError("provide nonempty confirmed-dead executor IDs")
+        if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1:
+            raise ValueError("batch_size must be a positive integer")
+        if self._cancellation_name is None:
+            raise ValueError("reconciliation requires a graph compiled through the plugin")
+        if DBOS.workflow_id is not None:
+            raise RuntimeError("reconcile cancellation outside a DBOS workflow")
+        completed: list[str] = []
+        while True:
+            requests = await DBOS.list_workflows_async(
+                name=self._cancellation_name,
+                status=["PENDING", "ENQUEUED"],
+                executor_id=dead_executor_ids,
+                limit=batch_size,
+                load_input=False,
+                load_output=False,
+            )
+            if not requests:
+                return completed
+            for request in requests:
+                handle = await DBOS.resume_workflow_async(request.workflow_id)
+                await handle.get_result()
+                completed.append(request.workflow_id)
 
     @staticmethod
     def _validate_limit(limit: int) -> None:
@@ -201,6 +240,7 @@ class DBOSLangGraphPlugin:
             # An interrupted request therefore retries the unfinished cascade.
             await DBOS.cancel_workflow_async(workflow_id, cancel_children=True)
 
-        cancellation = DBOS.workflow(name=f"dbos_langgraph.{self.name}.cancel")(cancel)
+        cancellation_name = f"dbos_langgraph.{self.name}.cancel"
+        cancellation = DBOS.workflow(name=cancellation_name)(cancel)
         self._compiled = True
-        return DurableGraph(durable, cancellation)
+        return DurableGraph(durable, cancellation, cancellation_name)

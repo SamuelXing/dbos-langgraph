@@ -32,7 +32,16 @@ async def run(args):
 
     builder = StateGraph(dict)
     plugin = DBOSLangGraphPlugin("cancellation-crash")
-    plugin.add_node(builder, "node", node, step_options=StepOptions(preemptible=True))
+    if args.deep:
+        leaf = DBOS.step(name="cancellation-crash.deep.step", preemptible=True)(node)
+        descendant = DBOS.workflow(name="cancellation-crash.deep.workflow")(leaf)
+
+        async def nested(state):
+            return await descendant(state)
+
+        plugin.add_node(builder, "node", nested, execute_in="workflow")
+    else:
+        plugin.add_node(builder, "node", node, step_options=StepOptions(preemptible=True))
     builder.add_edge(START, "node")
     builder.add_edge("node", END)
     app = plugin.compile(builder)
@@ -40,7 +49,7 @@ async def run(args):
         config={
             "name": "cancellation-crash-tests",
             "system_database_url": os.environ["DBOS_SYSTEM_DATABASE_URL"],
-            "executor_id": args.id + ("-replacement" if args.inspect else "-original"),
+            "executor_id": args.id + "-" + args.executor,
             "application_version": args.id,
             "enable_otlp": False,
             "log_level": "CRITICAL",
@@ -52,7 +61,23 @@ async def run(args):
             before_root = await DBOS.get_workflow_status_async(args.id)
             before = await DBOS.list_workflows_async(parent_workflow_id=args.id)
             request_status = None
-            if args.durable:
+            if args.reconcile:
+                if args.pause_reconcile:
+                    original_lookup = instance._sys_db._get_direct_children
+
+                    def interrupted_lookup(ids):
+                        if args.id in ids:
+                            (directory / "reconcile-gap").touch()
+                            threading.Event().wait()
+                        return original_lookup(ids)
+
+                    instance._sys_db._get_direct_children = interrupted_lookup
+                owners = [args.id + "-original", args.id + "-replacement"]
+                assert await app.reconcile_cancellations([args.id + "-unrelated"]) == []
+                completed = await app.reconcile_cancellations(owners, batch_size=1)
+                request = await DBOS.retrieve_workflow_async(args.id + "-cancel")
+                request_status = (await request.get_status()).status
+            elif args.durable:
                 request = await DBOS.resume_workflow_async(args.id + "-cancel")
                 await asyncio.wait_for(request.get_result(), 15)
                 request_status = (await request.get_status()).status
@@ -71,6 +96,22 @@ async def run(args):
             root = await handle.get_status()
             children = await DBOS.list_workflows_async(parent_workflow_id=args.id)
             observation = {"request": request_status} if args.durable else {}
+            if args.reconcile:
+                descendants = await DBOS.list_workflows_async(
+                    parent_workflow_id=children[0].workflow_id
+                )
+                observation.update(
+                    completed=completed, descendants=[child.status for child in descendants]
+                )
+                if args.multiple:
+                    other = await DBOS.get_workflow_status_async(args.id + "-other")
+                    other_children = await DBOS.list_workflows_async(
+                        parent_workflow_id=args.id + "-other"
+                    )
+                    observation.update(
+                        other_root=other.status,
+                        other_children=[child.status for child in other_children],
+                    )
             if args.durable:
                 invalid = await app.request_cancel(args.id + "-missing")
                 try:
@@ -97,11 +138,17 @@ async def run(args):
         with SetWorkflowID(args.id):
             await app.start({})
         await asyncio.wait_for(entered.wait(), 10)
+        if args.multiple:
+            with SetWorkflowID(args.id + "-other"):
+                await app.start({})
+            async with asyncio.timeout(10):
+                while len((directory / "calls").read_text().splitlines()) < 2:
+                    await asyncio.sleep(0.01)
         if args.boundary == "cascade":
             original = instance._sys_db._get_direct_children
 
             def held_children(ids):
-                if args.id in ids:
+                if args.id in ids or (args.multiple and args.id + "-other" in ids):
                     # The root transaction has committed; descendants are still pending.
                     (directory / "gap").touch()
                     threading.Event().wait()
@@ -111,6 +158,11 @@ async def run(args):
         if args.durable:
             with SetWorkflowID(args.id + "-cancel"):
                 request = await app.request_cancel(args.id)
+            if args.multiple:
+                with SetWorkflowID(args.id + "-other-cancel"):
+                    other_request = await app.request_cancel(args.id + "-other")
+                (directory / "other-request-started").touch()
+                await other_request.get_result()
             await request.get_result()
         else:
             await DBOS.cancel_workflow_async(args.id, cancel_children=True)
@@ -127,4 +179,9 @@ if __name__ == "__main__":
     parser.add_argument("--boundary", choices=["cascade", "cleanup"], required=True)
     parser.add_argument("--inspect", action="store_true")
     parser.add_argument("--durable", action="store_true")
+    parser.add_argument("--deep", action="store_true")
+    parser.add_argument("--reconcile", action="store_true")
+    parser.add_argument("--pause-reconcile", action="store_true")
+    parser.add_argument("--executor", default="original")
+    parser.add_argument("--multiple", action="store_true")
     asyncio.run(run(parser.parse_args()))

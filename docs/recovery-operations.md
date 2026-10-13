@@ -157,10 +157,53 @@ Use a distinct executor ID. Resume the pending control request with
 DBOS.resume_workflow_async(request_id) and await its result before requesting
 recovery of the dead executor's remaining histories. Do not resume the cancelled
 graph itself. Recovering the control request and its target children together can
-race cancellation against unfinished child execution. The adapter does not enforce
-this recovery priority or discover pending cancellation requests for a service.
+race cancellation against unfinished child execution. The adapter supplies discovery through reconcile_cancellations; the service must
+keep general recovery disabled until reconciliation completes.
 
 Crash tests resume the stored request through that public SDK API, without issuing
 a new cancellation call from the replacement. They cover the root/child transaction
 gap and a crash during cleanup, and reject a missing target. Interrupted cleanup
 still needs a separate retryable operation.
+
+
+## Reconcile a dead executor's cancellation requests
+
+Run await app.reconcile_cancellations(dead_executor_ids) from one recovery
+coordinator after confirming those executors are dead. The method discovers
+PENDING and ENQUEUED cancellation histories by this graph's registered name and
+executor IDs. It resumes each request and awaits completion, returning completed
+request IDs. A batch size limits each query; completed requests disappear from
+subsequent queries, so discovery does not skip requests as statuses change.
+Exceptions propagate and must block general recovery.
+
+Include any reconciliation executor that subsequently died in the next pass's
+list. A resumed request can acquire that executor's identity. Use a new live
+executor ID, register compatible code, and keep other recovery coordinators and
+general dead-executor recovery from racing this pass. The method does not prove
+process death, provide leader election, authorize tenants, or retry ERROR requests.
+It discovers requests owned by the supplied executors, not every queued control
+request in the database. Repeat reconciliation for every registered graph that
+may own cancellation requests before releasing general recovery.
+
+The runnable example is [cancellation_worker.py](../examples/cancellation_worker.py).
+With DBOS_SYSTEM_DATABASE_URL set to a dedicated database, run in separate shells:
+
+```sh
+python examples/cancellation_worker.py --executor graph-worker start graph-123
+python examples/cancellation_worker.py --executor control-worker cancel graph-123 cancel-123
+```
+
+After confirming a control worker has died, reconcile using a distinct executor:
+
+```sh
+python examples/cancellation_worker.py --executor recovery-worker reconcile --dead-executor control-worker
+```
+
+The example exits after cancellation reconciliation. Release your deployment's
+DBOS dead-executor recovery only after this command succeeds for all relevant
+graphs. It does not run general recovery or restart cancelled graph roots.
+
+Tests cover two pending requests with batch_size=1, root/node/nested-child
+hierarchies, and a second SIGKILL while the reconciliation worker repeats a
+cascade. The final worker discovers requests under either dead executor and
+finishes cancellation without another node-body execution.

@@ -106,3 +106,15 @@ async def test_invalid_cancellation_target_never_starts_request(workflow_id):
     graph = DurableGraph(workflow)
     with pytest.raises(ValueError, match="nonempty string"):
         await graph.request_cancel(workflow_id)
+
+
+@pytest.mark.parametrize("owners", [[], [""], [None], "executor"])
+@pytest.mark.asyncio
+async def test_reconciliation_requires_explicit_dead_executor_ids(owners):
+    from dbos_langgraph import DurableGraph
+
+    async def workflow(*args):
+        pytest.fail("invalid reconciliation must not start work")
+
+    with pytest.raises(ValueError, match="confirmed-dead"):
+        await DurableGraph(workflow).reconcile_cancellations(owners)

@@ -32,8 +32,9 @@ PostgreSQL tests kill the original owner with duplicate callers waiting, recover
 its history, and verify reuse of the original input. Larger contention samples
 and crashes at other boundaries remain untested. Services requiring input-conflict
 rejection need an atomic request-identity binding at their boundary.
-Next tests need to cover long-duration outages and automatic cancellation
-reconciliation after an interrupted control request.
+Cancellation reconciliation covers two requests, a nested child workflow, and
+a second coordinator crash. Services must still enforce exclusive coordination
+and run reconciliation before general recovery. Long-duration outages remain untested.
 Identical-input task identity remains an open question.
 
 Ordinary errors, transient/exhausted retries, backoff crashes, per-attempt timeouts,

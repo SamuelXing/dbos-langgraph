@@ -62,6 +62,8 @@ input. Use a new ID for a new request, or validate request identity in your serv
 The node replay guard does not validate duplicate root requests.
 A complete runnable example is [examples/basic.py](examples/basic.py).
 
+For an existing graph, see [migration](docs/migration.md).
+
 ## Cancellation
 
 Start cancellation outside a DBOS workflow, using a different ID for the control
@@ -79,7 +81,8 @@ The request is a separate durable workflow that recursively cancels an existing
 root of this graph. Its result means the SDK cancellation cascade returned; it
 does not mean node cleanup or external effects finished. If its worker dies,
 resume the cancellation request and await its result before recovering that
-executor's graph histories. See [recovery operations](docs/recovery-operations.md).
+executor's graph histories. Use `app.reconcile_cancellations(dead_executor_ids)`
+to discover and finish requests assigned to confirmed-dead executors. See [recovery operations](docs/recovery-operations.md).
 
 ## Execution contract
 

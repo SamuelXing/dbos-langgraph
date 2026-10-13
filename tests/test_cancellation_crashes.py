@@ -50,7 +50,11 @@ def test_crash_during_recursive_cancellation(tmp_path, boundary, durable):
         finally:
             stop([worker])
     restarted = subprocess.run(
-        command + ["--inspect"], env=env, capture_output=True, text=True, timeout=45
+        command + ["--inspect", "--executor", "replacement"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=45,
     )
     (tmp_path / "restart.log").write_text(restarted.stdout + restarted.stderr)
     assert restarted.returncode == 0, restarted.stdout + restarted.stderr

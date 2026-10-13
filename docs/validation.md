@@ -90,6 +90,14 @@ root/child status, repeated result errors, and the persistent body audit. The
 transaction-gap probe intercepts DBOS's private child lookup in the test worker;
 the installed adapter does not call that helper. Interrupted cleanup is not resumed.
 
+Reconciliation tests discover one or two pending control histories under
+confirmed-dead executors with batch_size=1. They include a nested child workflow
+and another crash while a replacement resumes the cancellation cascade. A final
+coordinator discovers the request under either dead executor and completes it
+without another node-body execution. An unrelated executor filter returns no
+requests. The cancellation worker example also has a local start/cancel/reconcile
+smoke check.
+
 ## Running the checks
 
 ```sh
@@ -116,8 +124,8 @@ promise exactly-once external side effects.
 
 | Check | Result |
 | --- | --- |
-| PostgreSQL suite | 64 passed, 184.64 seconds |
-| SQLite suite | 55 passed, 9 PostgreSQL-only cases skipped, 163.98 seconds |
+| PostgreSQL suite | 72 passed, 223.00 seconds |
+| SQLite suite | 63 passed, 9 PostgreSQL-only cases skipped, 201.52 seconds |
 | Ruff lint and formatting | Passed |
 | Strict mypy | Passed |
 | Source distribution and wheel build | Passed |
@@ -132,4 +140,4 @@ owner-crash cases require PostgreSQL; the other six also run on SQLite.
 The full-suite results include manual cancellation retry, stored cancellation
 request recovery, missing-target rejection, and invalid request-ID validation.
 The wheel was installed with its dependencies in a fresh environment and imported
-outside the checkout; DurableGraph.request_cancel was available.
+outside the checkout; DurableGraph.request_cancel and reconcile_cancellations were available.
