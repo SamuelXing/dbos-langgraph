@@ -36,7 +36,7 @@ def test_three_crashes_reuse_committed_results(tmp_path, mode, seed):
         "GRAPH_BLOCK_KEY": block_key,
     }
     base_command = [sys.executable, "-m", "tests.support.plugin_worker"]
-    observed_commits = set()
+    committed_counts = {}
     counts_before_last_crash = Counter()
     for attempt in range(3):
         ready.unlink(missing_ok=True)
@@ -50,8 +50,11 @@ def test_three_crashes_reuse_committed_results(tmp_path, mode, seed):
         )
         counts_before_last_crash = read_counts(audit)
         assert counts_before_last_crash[block_key] == attempt + 1
-        observed_commits.update(read_counts(commits))
-        assert all(counts_before_last_crash[key] == 1 for key in observed_commits)
+        assert all(
+            counts_before_last_crash[key] == count for key, count in committed_counts.items()
+        )
+        for key in read_counts(commits):
+            committed_counts.setdefault(key, counts_before_last_crash[key])
 
     for key in ("GRAPH_READY", "GRAPH_READY_KEY", "GRAPH_BLOCK_KEY"):
         env.pop(key)
@@ -74,6 +77,7 @@ def test_three_crashes_reuse_committed_results(tmp_path, mode, seed):
     assert actual == expected
     final_counts = read_counts(audit)
     assert final_counts[block_key] == 4
-    assert all(final_counts[key] == 1 for key in observed_commits)
+    assert final_counts[ready_key] == 1
+    assert all(final_counts[key] == count for key, count in committed_counts.items())
     assert all(count <= counts_before_last_crash[key] + 1 for key, count in final_counts.items())
     assert len(final_counts) == (rounds * 4 if mode == "cycle" else 4)

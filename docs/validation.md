@@ -18,13 +18,24 @@ dedicated database and isolate application versions and recovery ownership per c
 
 Audit markers are written after a child result is committed. A result may commit
 before its marker is written, so an absent marker does not prove unfinished work.
-Assertions require marked results to be reused and bound the additional executions
-of unmarked bodies. Seeded delays vary body completion timing, not child registration
+Assertions freeze each body's execution count when its commit is first observed
+and require that count to remain unchanged on later recoveries. A body may already
+have repeated before that observation. Separate assertions check known committed
+and deliberately unfinished nodes. Seeded delays vary body completion timing, not child registration
 order.
 
 The competing-worker harness calls DBOS._recover_pending_workflows to exercise the
 SDK recovery-service path. The installed adapter does not call that internal API.
 Both workers must retrieve the expected result without unexpected body executions.
+
+## PostgreSQL fault checks
+
+The connection test terminates only sessions tagged for that worker, then checks
+reconnection and one body execution per node. The stale-invocation test holds an
+original body while recovery claims its history, lets that body return an altered
+update, and verifies that the expected graph result survives. Recovered jobs may
+run on either process, so the altered update belongs only to the first invocation.
+See [recovery operations](recovery-operations.md) for deployment prerequisites.
 
 ## Failure checks
 
@@ -48,14 +59,14 @@ uv run pytest -q
 ```
 
 Set GRAPH_TEST_DATABASE_URL to a dedicated PostgreSQL database to run that backend.
-The competing-worker case is skipped on SQLite. Process logs are retained in the
+The competing-worker and PostgreSQL fault cases are skipped on SQLite. Process logs are retained in the
 pytest temporary directory. The wheel contains the library and its type marker;
 test fixtures are excluded.
 
 ## Limits
 
-Hosted CI, Python 3.13, Docker Compose, stale-worker recovery, network partitions,
-rolling upgrades, and database outages have not been verified locally. Identical-input
+Hosted CI, Python 3.13, Docker Compose, network partitions, rolling upgrades, and
+prolonged database outages have not been verified locally. Identical-input
 task identity is not established by the input fingerprint guard. These tests do not
 promise exactly-once external side effects.
 
@@ -63,8 +74,8 @@ promise exactly-once external side effects.
 
 | Check | Result |
 | --- | --- |
-| PostgreSQL suite | 42 passed, 131.15 seconds |
-| SQLite suite | 41 passed, 1 PostgreSQL-only case skipped, 133.17 seconds |
+| PostgreSQL suite | 44 passed, 155.01 seconds |
+| SQLite suite | 41 passed, 3 PostgreSQL-only cases skipped, 151.85 seconds |
 | Ruff lint and formatting | Passed |
 | Strict mypy | Passed |
 | Source distribution and wheel build | Passed |

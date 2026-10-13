@@ -5,6 +5,7 @@ import asyncio
 import hashlib
 import json
 import os
+from collections import Counter
 from pathlib import Path
 
 from dbos import DBOS, SetWorkflowID
@@ -82,17 +83,28 @@ def build(mode):
     plugin = ProbePlugin("acceptance-" + mode)
     graph = StateGraph(State if mode == "cycle" else MapState)
     if mode == "cycle":
+        invocations = Counter()
         for name in GRAPH.nodes:
 
             def factory(name):
                 async def node(state):
                     key = invocation_key(name, state)
+                    invocations[key] += 1
+                    invocation_number = invocations[key]
                     audit(key)
                     await scheduling_delay(key)
                     await hold_recovery_node(key)
                     if key == os.environ.get("GRAPH_BLOCK_KEY"):
                         await asyncio.sleep(3600)
-                    return await GRAPH.nodes[name](state)
+                    result = await GRAPH.nodes[name](state)
+                    if key == os.environ.get("GRAPH_GATE_KEY") and invocation_number == 1:
+                        result["score"] = result.get("score", 0) + int(
+                            os.environ.get("GRAPH_STALE_SCORE_OFFSET", "0")
+                        )
+                        finished = os.environ.get("GRAPH_BODY_FINISHED")
+                        if finished:
+                            Path(finished).write_text("body returned")
+                    return result
 
                 return node
 
@@ -163,16 +175,18 @@ def build(mode):
 async def run(args):
     apps = {mode: build(mode) for mode in ("cycle", "dynamic", "isolated")}
     app = apps[args.mode]
-    DBOS(
-        config={
-            "name": "plugin-acceptance",
-            "system_database_url": os.environ["DBOS_SYSTEM_DATABASE_URL"],
-            "executor_id": os.environ.get("GRAPH_EXECUTOR_ID", "plugin-" + args.id),
-            "application_version": "plugin-v0-" + args.id,
-            "enable_otlp": False,
-            "log_level": "WARNING",
-        }
-    )
+    config = {
+        "name": "plugin-acceptance",
+        "system_database_url": os.environ["DBOS_SYSTEM_DATABASE_URL"],
+        "executor_id": os.environ.get("GRAPH_EXECUTOR_ID", "plugin-" + args.id),
+        "application_version": "plugin-v0-" + args.id,
+        "enable_otlp": False,
+        "log_level": "WARNING",
+    }
+    connection_name = os.environ.get("GRAPH_DB_APPLICATION_NAME")
+    if connection_name:
+        config["db_engine_kwargs"] = {"connect_args": {"application_name": connection_name}}
+    DBOS(config=config)
     DBOS.launch()
     try:
         if args.command == "start":
@@ -186,7 +200,12 @@ async def run(args):
         else:
             await request_recovery()
             handle = await DBOS.retrieve_workflow_async(args.id)
-        print(json.dumps({"state": await asyncio.wait_for(handle.get_result(), 60)}), flush=True)
+        result = await asyncio.wait_for(handle.get_result(), 60)
+        exit_gate = os.environ.get("GRAPH_WORKER_EXIT_GATE")
+        if exit_gate:
+            while not Path(exit_gate).exists():
+                await asyncio.sleep(0.01)
+        print(json.dumps({"state": result}), flush=True)
     finally:
         DBOS.destroy()
 

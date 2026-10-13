@@ -82,6 +82,9 @@ need idempotency or appropriate transactions. Exactly-once external effects are 
 See [node failures and cancellation](docs/failures.md) for leaf-node retry,
 timeout, and cancellation options.
 
+Recovery requires verified-dead executors. A fenced database result does not stop
+an old body from making external writes. See [recovery operations](docs/recovery-operations.md).
+
 ## Supported scope
 
 Explicit async, single-state-argument nodes returning dict updates; native reducers;
@@ -99,5 +102,6 @@ Tests use SIGKILL and actual node-body audit counts; probes live only under test
 - [Execution model](docs/architecture.md)
 - [Replay and code changes](docs/replay.md)
 - [Node failures](docs/failures.md)
+- [Recovery operations](docs/recovery-operations.md)
 - [Test coverage](docs/validation.md)
 - [Contributing](CONTRIBUTING.md)

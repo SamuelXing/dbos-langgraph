@@ -2,6 +2,10 @@
 
 ## 0.1.0a2 (unreleased)
 
+- Test reconnecting after termination of a worker's tagged PostgreSQL sessions.
+- Test stale-invocation result fencing and document the dead-executor prerequisite.
+- Compare committed body counts from their first observed commit in repeated-crash tests.
+
 - Cancel interrupted child histories when Pregel cancels a sibling coroutine.
 - Verify that backoff crashes reset unfinished-step attempt budgets.
 - Remove development-session notes from the documentation.

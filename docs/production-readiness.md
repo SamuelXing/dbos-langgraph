@@ -16,8 +16,13 @@ A second test crashes the graph in three successive loop rounds. A PostgreSQL
 case synchronizes recovery requests from two distinct workers for a dead worker's
 history and checks results and node-body counts.
 
-Next tests need to cover stale workers that are still running, database disconnects,
-duplicate invocations, and crashes during cancellation. Identical-input task identity
+A scoped connection-termination test covers reconnecting after lost PostgreSQL
+sessions. A live-worker probe verifies that an original invocation's altered update
+does not replace the recovered result. Recovery still requires verified-dead
+executors; fencing stored results does not fence external tool effects.
+
+Next tests need to cover prolonged database outages, duplicate invocations, and
+crashes during cancellation. Identical-input task identity
 remains an open question.
 
 Ordinary errors, transient/exhausted retries, backoff crashes, per-attempt timeouts,
