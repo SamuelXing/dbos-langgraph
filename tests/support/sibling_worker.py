@@ -11,15 +11,17 @@ from langgraph.graph import END, START, StateGraph
 from dbos_langgraph import DBOSLangGraphPlugin
 
 
-async def run(identity, inspect_only=False):
+async def run(identity, inspect_only=False, repeat_cancel=False):
     entered = asyncio.Event()
     release = asyncio.Event()
     stopped = asyncio.Event()
     child_id = None
     finished = False
+    slow_task = None
 
     async def slow(state):
-        nonlocal child_id, finished
+        nonlocal child_id, finished, slow_task
+        slow_task = asyncio.current_task()
         child_id = DBOS.workflow_id
         entered.set()
         try:
@@ -52,6 +54,17 @@ async def run(identity, inspect_only=False):
         }
     )
     DBOS.launch()
+    if repeat_cancel and not inspect_only:
+        original_cancel = DBOS.cancel_workflow_async
+
+        async def interrupted_cancel(workflow_id, *, cancel_children=False):
+            if workflow_id == child_id:
+                # Force another Pregel-style cancellation while durable cleanup awaits I/O.
+                slow_task.cancel()
+                await asyncio.sleep(0.05)
+            await original_cancel(workflow_id, cancel_children=cancel_children)
+
+        DBOS.cancel_workflow_async = interrupted_cancel
     try:
         if inspect_only:
             handle = await DBOS.retrieve_workflow_async(identity)
@@ -109,5 +122,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--id", required=True)
     parser.add_argument("--inspect", action="store_true")
+    parser.add_argument("--repeat-cancel", action="store_true")
     args = parser.parse_args()
-    asyncio.run(run(args.id, args.inspect))
+    asyncio.run(run(args.id, args.inspect, args.repeat_cancel))

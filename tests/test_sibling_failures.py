@@ -6,8 +6,11 @@ import subprocess
 import sys
 import uuid
 
+import pytest
 
-def test_parallel_failure_cancels_interrupted_child(tmp_path):
+
+@pytest.mark.parametrize("repeat_cancel", [False, True], ids=["ordinary", "repeated-cancel"])
+def test_parallel_failure_cancels_interrupted_child(tmp_path, repeat_cancel):
     identity = "siblings-" + uuid.uuid4().hex
     env = {
         **os.environ,
@@ -16,6 +19,8 @@ def test_parallel_failure_cancels_interrupted_child(tmp_path):
         ),
     }
     command = [sys.executable, "-m", "tests.support.sibling_worker", "--id", identity]
+    if repeat_cancel:
+        command.append("--repeat-cancel")
     result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=45)
     (tmp_path / "failure.log").write_text(result.stdout + result.stderr)
     assert result.returncode == 0, result.stdout + result.stderr

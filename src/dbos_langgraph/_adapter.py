@@ -216,7 +216,17 @@ class DBOSLangGraphPlugin:
                 # histories too, so startup recovery cannot revive abandoned nodes.
                 workflow_id = DBOS.workflow_id
                 if workflow_id is not None:
-                    await DBOS.cancel_workflow_async(workflow_id, cancel_children=True)
+                    cancellation = asyncio.create_task(
+                        DBOS.cancel_workflow_async(workflow_id, cancel_children=True)
+                    )
+                    # Pregel may cancel this task again while the SDK commits cleanup.
+                    # Keep the cancellation operation alive and drain it before exit.
+                    while not cancellation.done():
+                        try:
+                            await asyncio.shield(cancellation)
+                        except asyncio.CancelledError:
+                            continue
+                    cancellation.result()
                 raise
             return {"identity": invocation_identity, "update": update}
 

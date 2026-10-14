@@ -2,6 +2,9 @@
 
 ## 0.1.0a2 (unreleased)
 
+- Shield sibling-history cancellation against repeated task cancellation.
+- Fix PostgreSQL service health-check quoting in GitHub Actions.
+
 - Register existing StateGraph builders through node execution metadata.
 - Reconstruct JSON runtime context in durable nodes and include it in replay checks.
 
