@@ -114,6 +114,18 @@ Registration validation rejects missing/invalid execution metadata. Non-JSON
 context is rejected before starting a root workflow. The runtime_context.py
 example was also executed locally without model credentials.
 
+## LangChain messages
+
+A MessagesState graph runs a credential-free model/tool/model loop. Tests kill the
+worker inside the first tool call after the model result is committed, then
+recover with explicit message IDs or adapter-assigned IDs. The model body runs
+once, the unfinished tool runs again, and the final answer runs once. Assertions
+check message classes, IDs, tool-call links, artifacts, and structured content.
+Native add_messages tests check ID-based replacement and RemoveMessage updates.
+Canonical identity tests distinguish a message from its JSON representation and
+reject non-JSON artifacts. Message objects use the DBOS Python serializer, not a
+portable cross-language encoding. The messages_agent.py example also ran locally.
+
 ## Running the checks
 
 ```sh
@@ -140,8 +152,8 @@ promise exactly-once external side effects.
 
 | Check | Result |
 | --- | --- |
-| PostgreSQL suite | 78 passed, 216.89 seconds |
-| SQLite suite | 69 passed, 9 PostgreSQL-only cases skipped, 201.92 seconds |
+| PostgreSQL suite | 83 passed, 240.79 seconds |
+| SQLite suite | 74 passed, 9 PostgreSQL-only cases skipped, 226.47 seconds |
 | Ruff lint and formatting | Passed |
 | Strict mypy | Passed |
 | Source distribution and wheel build | Passed |
@@ -157,3 +169,5 @@ The full-suite results include manual cancellation retry, stored cancellation
 request recovery, missing-target rejection, and invalid request-ID validation.
 The wheel was installed with its dependencies in a fresh environment and imported
 outside the checkout; DurableGraph.request_cancel, reconcile_cancellations, and register_graph were available.
+
+The message cases also passed on local Python 3.13: 4 passed in 11.09 seconds.

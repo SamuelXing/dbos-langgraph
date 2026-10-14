@@ -34,3 +34,12 @@ JSON runtime context is part of the root input and the node replay fingerprint.
 The leaf reconstructs Runtime.context from an isolated copy. Other Runtime fields
 are not forwarded. Histories created without context retain their original root
 argument shape, child argument shape, and input fingerprint format.
+
+
+Standard LangChain messages remain native Python objects in DBOS history. Their
+replay fingerprints encode typed message trees separately from plain JSON, using
+LangChain's message fields and conversion utilities. Missing input IDs are assigned
+before starting the root workflow; missing node update IDs derive from the child
+workflow ID and field path before result storage. This keeps add_messages from
+generating different IDs while rebuilding state. Message metadata must be JSON,
+and custom subclasses are rejected. Context remains JSON-only.

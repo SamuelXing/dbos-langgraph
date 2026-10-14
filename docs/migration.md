@@ -1,7 +1,7 @@
 # Moving an existing graph to DBOS
 
 The current migration path supports explicit StateGraph builders with async nodes,
-JSON state, and dict updates. Edges, conditional routing, reducers, and native
+JSON and message state, and dict updates. Edges, conditional routing, reducers, and native
 Pregel scheduling remain in LangGraph. DBOS replaces checkpoint-based recovery for
 new invocations. Existing LangGraph checkpoints cannot be imported.
 
@@ -50,12 +50,26 @@ durable-call order for pending histories. See [replay compatibility](replay.md).
 
 ## Adapt state and external calls
 
-State must contain JSON values: null, strings, booleans, finite numbers, lists,
-and objects with string keys. LangChain BaseMessage instances, dataclasses, custom
-objects, and tuples are not accepted. Serialize message history into JSON records
-and reconstruct model inputs inside the node. Ensure tool results also meet the
-state contract. Preserve message IDs and tool-call fields needed by your agent;
-reducing a message to its text alone can lose routing information.
+State accepts JSON values and standard LangChain message objects. MessagesState
+and add_messages can retain HumanMessage, AIMessage, ToolMessage, and the other
+standard message classes supported by LangChain's message conversion utilities.
+Message content, IDs, tool calls, tool-call IDs, artifacts, usage data, and metadata
+are included in replay identity. Custom message subclasses and non-JSON message
+metadata are rejected. Dataclasses, arbitrary Pydantic state objects, and tuple
+message shorthand remain unsupported.
+
+Use concrete message instances in root input and node updates. The adapter assigns
+missing root message IDs before starting the workflow and assigns missing update
+IDs from the child workflow ID and field path before storing its result. Explicit
+IDs remain unchanged, preserving add_messages replacement and RemoveMessage
+behavior. Dict/tuple message shorthand that causes a reducer to generate IDs is
+not covered; convert it into message instances first.
+
+The DBOS default Python serializer stores message objects. This is not a portable
+cross-language payload format. Workers need compatible LangChain classes; treat
+the system database as trusted input for the Python serializer. JSON-only node
+fingerprints retain their previous format. See the runnable
+[messages agent](../examples/messages_agent.py) for a credential-free model/tool loop.
 
 The default node body runs as one DBOS step. Model and tool libraries can remain
 inside that body, but an unfinished body may run again after a crash. A node that

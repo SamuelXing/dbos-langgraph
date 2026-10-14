@@ -98,7 +98,9 @@ Pass JSON context through app.start(state, context=...) or app.ainvoke(...).
 Nodes may accept runtime and read runtime.context. See
 [the context example](examples/runtime_context.py).
 
-Node inputs and updates must be JSON-compatible values with string object keys.
+Node inputs and updates accept JSON values with string object keys and standard
+LangChain messages. MessagesState and add_messages retain message IDs and tool-call
+links across replay. See [the message example](examples/messages_agent.py).
 Recovered results carry an input fingerprint; a changed invocation raises
 `ReplayMismatchError`. See [replay and code changes](docs/replay.md) for the exact
 check and its limits.

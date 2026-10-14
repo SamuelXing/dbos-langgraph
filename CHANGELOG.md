@@ -2,6 +2,9 @@
 
 ## 0.1.0a2 (unreleased)
 
+- Support standard LangChain messages in state and canonical replay identities.
+- Assign missing message IDs before durable storage and test MessagesState recovery.
+
 - Shield sibling-history cancellation against repeated task cancellation.
 - Fix PostgreSQL service health-check quoting in GitHub Actions.
 

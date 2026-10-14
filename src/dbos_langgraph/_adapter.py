@@ -14,7 +14,7 @@ from langgraph.graph import StateGraph
 from langgraph.runtime import Runtime
 
 from ._policy import StepOptions
-from ._state import fingerprint
+from ._state import fingerprint, prepare_messages
 
 Node = Callable[..., Awaitable[dict[str, Any]]]
 ExecutionMode = Literal["step", "workflow"]
@@ -44,16 +44,18 @@ class DurableGraph:
 
     async def ainvoke(self, state: Any, *, recursion_limit: int = 1000, context: Any = None) -> Any:
         self._validate_limit(recursion_limit)
+        state = prepare_messages(state)
         if context is None:
             return await self.workflow(state, recursion_limit)
-        fingerprint(context)
+        fingerprint(context, allow_messages=False)
         return await self.workflow(state, recursion_limit, context=deepcopy(context))
 
     async def start(self, state: Any, *, recursion_limit: int = 1000, context: Any = None) -> Any:
         self._validate_limit(recursion_limit)
+        state = prepare_messages(state)
         if context is None:
             return await DBOS.start_workflow_async(self.workflow, state, recursion_limit)
-        fingerprint(context)
+        fingerprint(context, allow_messages=False)
         return await DBOS.start_workflow_async(
             self.workflow, state, recursion_limit, context=deepcopy(context)
         )
@@ -186,8 +188,7 @@ class DBOSLangGraphPlugin:
                 result = await function(deepcopy(state))
             if not isinstance(result, dict):
                 raise TypeError("nodes must return dict state updates")
-            fingerprint(result)
-            return result
+            return cast(dict[str, Any], prepare_messages(result, seed=DBOS.workflow_id))
 
         durable_leaf = (
             DBOS.step(
