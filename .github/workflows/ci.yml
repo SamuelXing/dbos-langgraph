@@ -36,7 +36,7 @@ jobs:
           POSTGRES_DB: dbos_langgraph_test
         ports: ['5432:5432']
         options: >-
-          --health-cmd 'pg_isready -U test -d dbos_langgraph_test'
+          --health-cmd "pg_isready -U test -d dbos_langgraph_test"
           --health-interval 5s --health-timeout 3s --health-retries 20
     steps:
       - uses: actions/checkout@v4
