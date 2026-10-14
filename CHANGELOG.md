@@ -2,6 +2,9 @@
 
 ## 0.1.0a2 (unreleased)
 
+- Run synchronous step nodes in worker threads and reject unsupported preemption.
+- Persist supported invocation config and inject isolated snapshots into nodes.
+
 - Support standard LangChain messages in state and canonical replay identities.
 - Assign missing message IDs before durable storage and test MessagesState recovery.
 

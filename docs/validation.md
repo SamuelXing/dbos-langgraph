@@ -126,6 +126,19 @@ Canonical identity tests distinguish a message from its JSON representation and
 reject non-JSON artifacts. Message objects use the DBOS Python serializer, not a
 portable cross-language encoding. The messages_agent.py example also ran locally.
 
+## Sync nodes and invocation config
+
+Two concurrent typed-state graphs use sync nodes with different JSON configurable
+values, tags, metadata, and runtime context. The sync bodies assert that they run
+outside the event loop with DBOS context available. Each mutates its local config
+and context copy; a following async node must still see the original values.
+SIGKILL occurs after both sync results commit. Recovery reuses those results and
+reruns only the unfinished async nodes, producing the expected distinct states.
+
+Validation rejects unsupported config fields, opaque values, internal configurable
+keys, invalid recursion limits, conflicting limit sources, and sync preemption or
+timeouts. The sync_config.py example also ran locally without model credentials.
+
 ## Running the checks
 
 ```sh
@@ -152,8 +165,8 @@ promise exactly-once external side effects.
 
 | Check | Result |
 | --- | --- |
-| PostgreSQL suite | 83 passed, 240.79 seconds |
-| SQLite suite | 74 passed, 9 PostgreSQL-only cases skipped, 226.47 seconds |
+| PostgreSQL suite | 94 passed, 229.85 seconds |
+| SQLite suite | 85 passed, 9 PostgreSQL-only cases skipped, 214.69 seconds |
 | Ruff lint and formatting | Passed |
 | Strict mypy | Passed |
 | Source distribution and wheel build | Passed |
@@ -171,3 +184,5 @@ The wheel was installed with its dependencies in a fresh environment and importe
 outside the checkout; DurableGraph.request_cancel, reconcile_cancellations, and register_graph were available.
 
 The message cases also passed on local Python 3.13: 4 passed in 11.09 seconds.
+
+The sync/config cases also passed on local Python 3.13: 11 passed in 7.84 seconds.

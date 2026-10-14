@@ -43,3 +43,12 @@ before starting the root workflow; missing node update IDs derive from the child
 workflow ID and field path before result storage. This keeps add_messages from
 generating different IDs while rebuilding state. Message metadata must be JSON,
 and custom subclasses are rejected. Context remains JSON-only.
+
+
+Invocation configuration is normalized before starting a root. The root passes
+supported fields to Pregel and keeps a task-local snapshot for wrapped nodes.
+Each child receives serializable user configuration rather than callbacks or
+native execution internals. Nodes get separate copies, including when they run
+concurrently. Legacy no-config nodes retain their previous durable-call argument
+shape and fingerprint. Sync step nodes execute through asyncio.to_thread, which
+also propagates DBOS context; cancellation does not stop the thread itself.

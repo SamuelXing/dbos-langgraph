@@ -3,20 +3,22 @@
 import asyncio
 import inspect
 import re
-from collections.abc import Awaitable, Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from copy import copy, deepcopy
 from dataclasses import replace
 from typing import Any, Literal, TypedDict, cast
 
 from dbos import DBOS, WorkflowHandleAsync
+from langchain_core.runnables import RunnableConfig
 from langgraph._internal._runnable import RunnableCallable
 from langgraph.graph import StateGraph
 from langgraph.runtime import Runtime
 
+from ._config import invocation_config, normalize_config
 from ._policy import StepOptions
 from ._state import fingerprint, prepare_messages
 
-Node = Callable[..., Awaitable[dict[str, Any]]]
+Node = Callable[..., dict[str, Any] | Awaitable[dict[str, Any]]]
 ExecutionMode = Literal["step", "workflow"]
 
 
@@ -42,23 +44,43 @@ class DurableGraph:
         self._cancellation = cancellation
         self._cancellation_name = cancellation_name
 
-    async def ainvoke(self, state: Any, *, recursion_limit: int = 1000, context: Any = None) -> Any:
-        self._validate_limit(recursion_limit)
-        state = prepare_messages(state)
-        if context is None:
-            return await self.workflow(state, recursion_limit)
-        fingerprint(context, allow_messages=False)
-        return await self.workflow(state, recursion_limit, context=deepcopy(context))
+    async def ainvoke(
+        self,
+        state: Any,
+        config: Mapping[str, Any] | None = None,
+        *,
+        recursion_limit: int | None = None,
+        context: Any = None,
+    ) -> Any:
+        state, limit, options = self._invocation(state, config, recursion_limit, context)
+        return await self.workflow(state, limit, **options)
 
-    async def start(self, state: Any, *, recursion_limit: int = 1000, context: Any = None) -> Any:
-        self._validate_limit(recursion_limit)
-        state = prepare_messages(state)
-        if context is None:
-            return await DBOS.start_workflow_async(self.workflow, state, recursion_limit)
-        fingerprint(context, allow_messages=False)
-        return await DBOS.start_workflow_async(
-            self.workflow, state, recursion_limit, context=deepcopy(context)
-        )
+    async def start(
+        self,
+        state: Any,
+        config: Mapping[str, Any] | None = None,
+        *,
+        recursion_limit: int | None = None,
+        context: Any = None,
+    ) -> Any:
+        state, limit, options = self._invocation(state, config, recursion_limit, context)
+        return await DBOS.start_workflow_async(self.workflow, state, limit, **options)
+
+    @staticmethod
+    def _invocation(
+        state: Any,
+        config: Mapping[str, Any] | None,
+        limit: int | None,
+        context: Any,
+    ) -> tuple[Any, int, dict[str, Any]]:
+        config, limit = normalize_config(config, limit)
+        options: dict[str, Any] = {}
+        if config:
+            options["config"] = config
+        if context is not None:
+            fingerprint(context, allow_messages=False)
+            options["context"] = deepcopy(context)
+        return prepare_messages(state), limit, options
 
     async def request_cancel(self, workflow_id: str) -> WorkflowHandleAsync[None]:
         """Start an independent durable request to cancel this graph and its children.
@@ -111,11 +133,6 @@ class DurableGraph:
                 await handle.get_result()
                 completed.append(request.workflow_id)
 
-    @staticmethod
-    def _validate_limit(limit: int) -> None:
-        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
-            raise ValueError("recursion_limit must be a positive integer")
-
 
 class DBOSLangGraphPlugin:
     """Register one graph before launch. Each node gets an isolated child history."""
@@ -155,37 +172,49 @@ class DBOSLangGraphPlugin:
         if execute_in == "workflow" and step_options is not None:
             raise ValueError("workflow-mode nodes configure their own DBOS steps")
         options = step_options or StepOptions()
-        if not inspect.iscoroutinefunction(function):
-            raise TypeError("async nodes are required")
+        is_async = inspect.iscoroutinefunction(function)
+        if not inspect.isfunction(function) and not inspect.ismethod(function):
+            raise TypeError("nodes must be plain functions or bound methods")
+        if not is_async and execute_in != "step":
+            raise ValueError("sync nodes require step execution")
+        if not is_async and (options.preemptible or options.timeout_seconds is not None):
+            raise ValueError("sync node threads cannot be preempted or timed out")
         parameters = list(inspect.signature(function).parameters.values())
         positional = (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
-        accepts_runtime = (
-            len(parameters) == 2
-            and parameters[1].name == "runtime"
-            and parameters[1].kind
-            in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
-        )
+        extras = parameters[1:]
         if (
             not parameters
             or parameters[0].kind not in positional
-            or (len(parameters) != 1 and not accepts_runtime)
-        ):
-            raise TypeError(
-                "nodes must accept only state or state and runtime; config is unsupported"
+            or any(
+                parameter.name not in ("runtime", "config")
+                or parameter.kind
+                not in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+                for parameter in extras
             )
+        ):
+            raise TypeError("nodes must accept only state, config and runtime")
+        accepts_runtime = any(parameter.name == "runtime" for parameter in extras)
+        accepts_config = any(parameter.name == "config" for parameter in extras)
 
-        def identity(state: Any, context: Any) -> str:
+        def identity(state: Any, context: Any, config: Any = None) -> str:
             inputs = [self.name, name, execute_in, state]
             # Retain the fingerprint format of histories created without context.
             if context is not None:
                 inputs.append({"context": context})
+            if config is not None:
+                inputs.append({"config": config})
             return fingerprint(inputs)
 
-        async def leaf(state: Any, context: Any = None) -> dict[str, Any]:
+        async def leaf(state: Any, context: Any = None, config: Any = None) -> dict[str, Any]:
+            kwargs: dict[str, Any] = {}
             if accepts_runtime:
-                result = await function(deepcopy(state), runtime=Runtime(context=deepcopy(context)))
+                kwargs["runtime"] = Runtime(context=deepcopy(context))
+            if accepts_config:
+                kwargs["config"] = deepcopy(config)
+            if is_async:
+                result = await cast(Awaitable[dict[str, Any]], function(deepcopy(state), **kwargs))
             else:
-                result = await function(deepcopy(state))
+                result = await asyncio.to_thread(function, deepcopy(state), **kwargs)
             if not isinstance(result, dict):
                 raise TypeError("nodes must return dict state updates")
             return cast(dict[str, Any], prepare_messages(result, seed=DBOS.workflow_id))
@@ -204,14 +233,15 @@ class DBOSLangGraphPlugin:
             else leaf
         )
 
-        async def isolated_node(state: Any, context: Any = None) -> _NodeResult:
-            invocation_identity = identity(state, context)
+        async def isolated_node(state: Any, context: Any = None, config: Any = None) -> _NodeResult:
+            invocation_identity = identity(state, context, config)
             try:
-                update = (
-                    await durable_leaf(state)
-                    if context is None
-                    else await durable_leaf(state, context)
-                )
+                if config is not None:
+                    update = await durable_leaf(state, context, config)
+                elif context is not None:
+                    update = await durable_leaf(state, context)
+                else:
+                    update = await durable_leaf(state)
             except asyncio.CancelledError:
                 # Pregel cancels sibling coroutines on failure. Close their durable
                 # histories too, so startup recovery cannot revive abandoned nodes.
@@ -237,12 +267,18 @@ class DBOSLangGraphPlugin:
 
         async def node(state: Any, runtime: Runtime[Any]) -> dict[str, Any]:
             context = runtime.context
-            expected = identity(state, context)
-            envelope = (
-                await node_workflow(state)
-                if context is None
-                else await node_workflow(state, context)
-            )
+            invocation = invocation_config.get()
+            if invocation is None:
+                raise RuntimeError("durable nodes require a plugin graph invocation")
+            snapshot, configured = invocation
+            config = snapshot if accepts_config or configured else None
+            expected = identity(state, context, config)
+            if config is not None:
+                envelope = await node_workflow(state, context, config)
+            elif context is not None:
+                envelope = await node_workflow(state, context)
+            else:
+                envelope = await node_workflow(state)
             if "identity" not in envelope or "update" not in envelope:
                 raise ReplayMismatchError(
                     f"unsupported history format for {self.name}/{name}; "
@@ -264,7 +300,7 @@ class DBOSLangGraphPlugin:
         return self
 
     def register_graph(self, builder: StateGraph[Any, Any, Any, Any]) -> DurableGraph:
-        """Wrap existing async callable nodes on a copy of an uncompiled builder.
+        """Wrap existing callable nodes on a copy of an uncompiled builder.
 
         Each node must declare execute_in in metadata. Runnable compositions and
         LangGraph retry/cache/timeout policies require separate integrations.
@@ -279,10 +315,10 @@ class DBOSLangGraphPlugin:
             # This extraction is tied to the pinned LangGraph version. Accept only
             # its plain callable wrapper, never a composed Runnable's inner function.
             if not isinstance(spec.runnable, RunnableCallable) or spec.runnable.kwargs:
-                raise TypeError("existing nodes must be plain async functions")
-            function = spec.runnable.afunc
-            if function is None or not inspect.iscoroutinefunction(function):
-                raise TypeError("existing nodes must be plain async functions")
+                raise TypeError("existing nodes must be plain functions")
+            function = spec.runnable.func or spec.runnable.afunc
+            if function is None or not (inspect.isfunction(function) or inspect.ismethod(function)):
+                raise TypeError("existing nodes must be plain functions")
             if (
                 spec.retry_policy
                 or spec.cache_policy
@@ -325,13 +361,29 @@ class DBOSLangGraphPlugin:
             raise ValueError("one builder per plugin instance")
         graph = builder.compile()
 
-        async def invoke(state: Any, recursion_limit: int, context: Any = None) -> Any:
-            result = await graph.ainvoke(
-                state, {"recursion_limit": recursion_limit}, context=context
-            )
-            if isinstance(result, dict) and "__interrupt__" in result:
-                raise NotImplementedError("interrupt/resume is not supported")
-            return result
+        async def invoke(
+            state: Any, recursion_limit: int, context: Any = None, config: Any = None
+        ) -> Any:
+            user_config = config or {}
+            snapshot = {
+                "configurable": {},
+                "metadata": {},
+                "tags": [],
+                **user_config,
+                "recursion_limit": recursion_limit,
+            }
+            token = invocation_config.set((snapshot, bool(user_config)))
+            try:
+                result = await graph.ainvoke(
+                    state,
+                    cast(RunnableConfig, {**user_config, "recursion_limit": recursion_limit}),
+                    context=context,
+                )
+                if isinstance(result, dict) and "__interrupt__" in result:
+                    raise NotImplementedError("interrupt/resume is not supported")
+                return result
+            finally:
+                invocation_config.reset(token)
 
         durable = DBOS.workflow(name=f"dbos_langgraph.{self.name}.graph")(invoke)
 

@@ -1,6 +1,6 @@
 # Moving an existing graph to DBOS
 
-The current migration path supports explicit StateGraph builders with async nodes,
+The current migration path supports explicit StateGraph builders with plain sync or async nodes,
 JSON and message state, and dict updates. Edges, conditional routing, reducers, and native
 Pregel scheduling remain in LangGraph. DBOS replaces checkpoint-based recovery for
 new invocations. Existing LangGraph checkpoints cannot be imported.
@@ -27,22 +27,21 @@ builder.add_node("tools", tools_node, metadata={"execute_in": "step"})
 app = DBOSLangGraphPlugin("agent_v1").register_graph(builder)
 ```
 
-register_graph wraps plain async functions on a copy of an uncompiled builder.
+register_graph wraps plain functions on a copy of an uncompiled builder.
 It preserves native node schemas, destinations, and metadata and leaves the
 original builder unchanged. Each node must explicitly choose step or workflow
 execution. Optional step_options metadata accepts StepOptions. LangGraph
 retry/cache/timeout policies and error handlers are rejected; configure retries
-and timeouts through DBOS. Runnable compositions and synchronous nodes are not
-supported yet. The extraction of callable nodes uses the pinned LangGraph internal
+and timeouts through DBOS. Runnable compositions remain unsupported. Sync nodes use step execution and run
+in worker threads; workflow-mode nodes must be async. The extraction of callable nodes uses the pinned LangGraph internal
 wrapper; dependency upgrades need registration and recovery tests.
 
-Nodes accept state alone or state plus a parameter named runtime, including a
-keyword-only runtime parameter. Runtime.context is reconstructed from the JSON
+Nodes accept state alone, with optional parameters named config and runtime,
+including keyword-only parameters. Runtime.context is reconstructed from the JSON
 context supplied to start or ainvoke. Use a dict or TypedDict context schema;
 coercion into dataclass or Pydantic context objects is not supported yet.
 Every node gets its own copy, so context
-mutation does not communicate state updates between nodes. Config injection and
-other Runtime fields remain unsupported. Use dict updates and reducers for graph
+mutation does not communicate state updates between nodes. Other Runtime fields remain unsupported. Use dict updates and reducers for graph
 state. The manual plugin.add_node and plugin.compile path remains available.
 
 Choose a stable graph name and retain compatible routing, reducer behavior, and
@@ -104,7 +103,7 @@ for executor ownership, cancellation ordering, and recovery prerequisites.
 ## Features that need another migration path
 
 The adapter is not a CompiledStateGraph replacement. It does not implement
-interrupt/resume, streaming, subgraphs, config injection, checkpoint
+interrupt/resume, streaming, subgraphs, checkpoint
 history inspection, or time travel. Applications using those features need to keep
 their existing runtime until equivalent behavior has implementation and recovery
 tests. Prebuilt agents are not accepted directly; this API requires explicit node
@@ -115,3 +114,30 @@ Start with one isolated graph and new workflow IDs. Test its reducers and routin
 against the existing implementation, then inject process crashes around each
 external call before moving traffic. Keep the existing checkpoint histories
 available to the runtime that created them.
+
+
+## Invocation config
+
+start and ainvoke accept a second config argument. Supported fields are JSON
+configurable values, tags (a list of strings), JSON metadata, run_name, and a positive
+integer recursion_limit. Supplying conflicting recursion limits through config and
+the keyword argument raises ValueError. The default remains 1000.
+
+Nodes that accept config receive an isolated snapshot of those user fields, with
+empty configurable/metadata/tags defaults and the effective recursion limit.
+Config affects replay identity and is retained in root and child inputs. Live
+callbacks, max_concurrency, internal configurable keys, and other config fields are
+rejected before starting a workflow. Native LangGraph callbacks and execution
+internals are not the persisted config contract. Mutation inside a node does not
+update configuration for other nodes. Use state updates for that purpose.
+
+A configurable thread_id is ordinary invocation data; it does not select a DBOS
+workflow ID, resume a thread, or create checkpoint storage. Keep SetWorkflowID for
+request identity. A node must explicitly accept config to use the supported
+snapshot; implicit access to native execution internals is not guaranteed on replay.
+
+Sync nodes can use ordinary blocking libraries without blocking Pregel's event
+loop. StepOptions retries apply, but preemptible and timeout_seconds are rejected
+for sync nodes. Cancellation can stop waiting for a sync node while its thread
+continues; it cannot undo external effects. See the runnable
+[sync config example](../examples/sync_config.py).

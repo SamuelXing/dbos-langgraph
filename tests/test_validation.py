@@ -7,7 +7,7 @@ from dbos_langgraph import DBOSLangGraphPlugin
 def test_reject_unsupported_node_signatures():
     plugin = DBOSLangGraphPlugin("validation")
 
-    async def node(state, config):
+    async def node(state, unsupported):
         return {}
 
     with pytest.raises(TypeError, match="only state"):

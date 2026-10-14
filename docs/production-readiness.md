@@ -47,10 +47,11 @@ and durable cleanup operations still need coverage.
 
 ## LangGraph features
 
-The supported API accepts plain async nodes with state and optional runtime
+The supported API accepts plain sync/async nodes with state and optional config/runtime
 arguments and dict updates. State accepts JSON and standard LangChain messages;
-custom state objects and message shorthand need additional support. Runtime.context accepts JSON values; config injection
-and other Runtime fields are unsupported. Interrupt/resume, subgraphs, streaming, and Functional
+custom state objects and message shorthand need additional support. Runtime.context accepts JSON values. Config supports a persisted subset; callbacks
+and other Runtime fields are unsupported. Sync execution requires threads and
+cannot support preemption or per-attempt timeouts. Interrupt/resume, subgraphs, streaming, and Functional
 API need separate implementations and recovery tests. Add them one at a time;
 passing an ordinary invocation test is not sufficient.
 

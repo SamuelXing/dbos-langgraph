@@ -84,6 +84,10 @@ resume the cancellation request and await its result before recovering that
 executor's graph histories. Use `app.reconcile_cancellations(dead_executor_ids)`
 to discover and finish requests assigned to confirmed-dead executors. See [recovery operations](docs/recovery-operations.md).
 
+Config can be passed as the second argument to start or ainvoke. Nodes may accept
+config to read persisted configurable values, tags, metadata, the run name, and
+the recursion limit. See [the sync config example](examples/sync_config.py).
+
 ## Execution contract
 
 Native Pregel retains planning, routing, reducers, and joins. The graph runs in a
@@ -92,7 +96,7 @@ child workflow. Default `execute_in="step"` wraps its body in one durable step.
 `execute_in="workflow"` supports explicit DBOS multistep orchestration inside that
 child; all nondeterministic operations must be in steps.
 
-Existing builders can use metadata={"execute_in": "step"} on each plain async
+Existing builders can use metadata={"execute_in": "step"} on each plain sync or async
 node and app = plugin.register_graph(builder). The builder is copied before wrapping.
 Pass JSON context through app.start(state, context=...) or app.ainvoke(...).
 Nodes may accept runtime and read runtime.context. See
@@ -121,12 +125,12 @@ an old body from making external writes. See [recovery operations](docs/recovery
 
 ## Supported scope
 
-Explicit async, single-state-argument nodes returning dict updates; native reducers;
+Plain sync/async nodes returning dict updates, with optional config/runtime arguments; native reducers;
 fixed cycles and joins; tested simple Send fan-out; isolated multistep nodes.
 Sync nodes, config/runtime injection, unwrapped nodes, and invalid registration are rejected.
 This facade is not a drop-in CompiledStateGraph replacement.
 
-HITL, streaming, Functional API, config injection and Runtime fields other than context, general subgraphs,
+HITL, streaming, Functional API, callbacks and Runtime fields other than context, general subgraphs,
 dynamic graph changes, full cancellation/retry policy translation, and upgrades are
 not supported or validated. Do not use them under assumptions of durable compatibility.
 Tests use SIGKILL and actual node-body audit counts; probes live only under tests/support.
