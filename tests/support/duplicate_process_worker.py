@@ -56,10 +56,15 @@ async def run(args):
             handle = await app.start({"value": args.value})
         (directory / f"started-{args.worker}").touch()
         if args.recover:
-            await wait_for(directory / "recover-owner")
-            owner = (directory / "recover-owner").read_text()
-            # Exercise the SDK recovery-service path after the parent proves death.
-            await asyncio.to_thread(DBOS._recover_pending_workflows, [owner])
+            await wait_for(directory / "recover")
+            # The executor is known before launch. The gate only confirms death;
+            # never read an ID from a file that may be visible before its write.
+            owner = f"{args.id}-original"
+            print(json.dumps({"recover_owner": owner}), flush=True)
+            handles = await asyncio.to_thread(DBOS._recover_pending_workflows, [owner])
+            print(json.dumps({"recovered_histories": len(handles)}), flush=True)
+            if not handles:
+                raise RuntimeError(f"no pending histories found for dead executor {owner}")
         result = await asyncio.wait_for(handle.get_result(), 30)
         print(json.dumps(result), flush=True)
     finally:

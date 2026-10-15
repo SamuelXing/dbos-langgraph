@@ -104,7 +104,9 @@ def test_duplicate_creation_and_recovery(tmp_path, conflicting, crash):
                 original.kill()
                 original.wait(timeout=10)
                 # The recovery caller declares only the confirmed-dead executor.
-                (tmp_path / "recover-owner").write_text(f"{identity}-original")
+                # An empty gate deliberately covers the old publication race:
+                # readiness must not depend on reading the executor ID from it.
+                (tmp_path / "recover").touch()
                 wait_for(
                     lambda: len(read_calls(tmp_path)) == 2,
                     workers[1:],

@@ -186,3 +186,11 @@ outside the checkout; DurableGraph.request_cancel, reconcile_cancellations, and 
 The message cases also passed on local Python 3.13: 4 passed in 11.09 seconds.
 
 The sync/config cases also passed on local Python 3.13: 11 passed in 7.84 seconds.
+
+
+Owner-crash duplicate tests use an empty recovery gate. The confirmed-dead
+executor ID is derived from the test identity, not read from that gate: file
+existence can precede completion of a text write. Workers report the requested
+owner and recovery count and fail immediately if no pending histories match.
+CI retains worker logs and JSONL audits on failure for seven days and runs all
+matrix jobs to completion so one failure does not hide other backend results.

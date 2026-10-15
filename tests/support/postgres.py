@@ -14,9 +14,10 @@ from .example import GRAPH, initial
 def wait_for(predicate, workers, logs, message):
     deadline = time.monotonic() + 45
     while not predicate():
-        for worker, log in zip(workers, logs, strict=True):
-            assert worker.poll() is None, log.read_text()
-        assert time.monotonic() < deadline, message
+        exited = any(worker.poll() is not None for worker in workers)
+        if exited or time.monotonic() >= deadline:
+            details = "\n".join(f"{log.name}:\n{log.read_text()}" for log in logs)
+            raise AssertionError(f"{message}\n{details}")
         time.sleep(0.01)
 
 
