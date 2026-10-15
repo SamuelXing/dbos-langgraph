@@ -103,7 +103,7 @@ for executor ownership, cancellation ordering, and recovery prerequisites.
 ## Features that need another migration path
 
 The adapter is not a CompiledStateGraph replacement. It does not implement
-interrupt/resume, streaming, subgraphs, checkpoint
+general interrupt/resume, streaming, subgraphs, checkpoint
 history inspection, or time travel. Applications using those features need to keep
 their existing runtime until equivalent behavior has implementation and recovery
 tests. Prebuilt agents are not accepted directly; this API requires explicit node
@@ -141,3 +141,14 @@ loop. StepOptions retries apply, but preemptible and timeout_seconds are rejecte
 for sync nodes. Cancellation can stop waiting for a sync node while its thread
 continues; it cannot undo external effects. See the runnable
 [sync config example](../examples/sync_config.py).
+
+
+## A single human approval
+
+A step node may retain its native `interrupt(payload)` call when the plugin is
+registered with `interrupts=True`. Start the graph with `app.start`, observe the
+pause through `app.get_interrupt`, and submit its response through `app.resume`.
+Do not pass a native `Command` to the facade. Keep external effects outside the
+approval node because that node restarts from its beginning. Only one sequential
+pause per invocation is supported. See [human approval](interrupts.md) for the
+response and recovery contract.

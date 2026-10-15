@@ -2,6 +2,11 @@
 
 ## 0.1.0a2 (unreleased)
 
+- Add opt-in native interrupt/resume for one sequential human approval in a step node.
+- Persist approval delivery through a separate idempotent DBOS control workflow.
+- Recover paused and resumed nodes without repeating committed model/tool results.
+- Return polling handles for interrupt-enabled invocations to observe stored cancellation.
+
 - Run synchronous step nodes in worker threads and reject unsupported preemption.
 - Persist supported invocation config and inject isolated snapshots into nodes.
 

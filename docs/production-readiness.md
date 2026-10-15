@@ -51,9 +51,10 @@ The supported API accepts plain sync/async nodes with state and optional config/
 arguments and dict updates. State accepts JSON and standard LangChain messages;
 custom state objects and message shorthand need additional support. Runtime.context accepts JSON values. Config supports a persisted subset; callbacks
 and other Runtime fields are unsupported. Sync execution requires threads and
-cannot support preemption or per-attempt timeouts. Interrupt/resume, subgraphs, streaming, and Functional
-API need separate implementations and recovery tests. Add them one at a time;
-passing an ordinary invocation test is not sufficient.
+cannot support preemption or per-attempt timeouts. One opt-in sequential interrupt
+in a step node has crash/recovery coverage. Multiple and parallel interruptions,
+subgraphs, streaming, and Functional API need further implementation and recovery
+tests. Passing an ordinary invocation test is not sufficient.
 
 ## Deployments
 

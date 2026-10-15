@@ -139,6 +139,21 @@ Validation rejects unsupported config fields, opaque values, internal configurab
 keys, invalid recursion limits, conflicting limit sources, and sync preemption or
 timeouts. The sync_config.py example also ran locally without model credentials.
 
+## Human approval
+
+Interrupt tests opt in through `interrupts=True` and use native `interrupt()` in
+step nodes. They kill the worker while paused, inside the resumed approval body,
+and after the following tool result commits. The pause ID survives restart;
+committed model and tool bodies run once. Recovery of an unfinished resumed child
+reuses its stored response without another approval.
+
+Live cases preserve False, None, and empty-object responses. Conflicting retries
+and a retry after graph completion reuse the first approval. Stale interrupt IDs
+are rejected. A cancelled pause cannot resume the tool. Sync approval nodes run
+through the thread bridge. Multiple sequential interrupts, parallel interrupts,
+and workflow-mode interrupts must fail explicitly. The approval example also ran
+with a real console response and temporary SQLite history.
+
 ## Running the checks
 
 ```sh
@@ -156,7 +171,7 @@ test fixtures are excluded.
 
 ## Limits
 
-Hosted CI, Python 3.13, Docker Compose, network partitions, rolling upgrades, and
+Docker Compose, network partitions, rolling upgrades, and
 prolonged database outages have not been verified locally. Identical-input
 task identity is not established by the input fingerprint guard. These tests do not
 promise exactly-once external side effects.
@@ -165,8 +180,8 @@ promise exactly-once external side effects.
 
 | Check | Result |
 | --- | --- |
-| PostgreSQL suite | 94 passed, 229.85 seconds |
-| SQLite suite | 85 passed, 9 PostgreSQL-only cases skipped, 214.69 seconds |
+| PostgreSQL suite | 105 passed, 309.82 seconds |
+| SQLite suite | 96 passed, 9 PostgreSQL-only cases skipped, 299.58 seconds |
 | Ruff lint and formatting | Passed |
 | Strict mypy | Passed |
 | Source distribution and wheel build | Passed |
@@ -194,3 +209,11 @@ existence can precede completion of a text write. Workers report the requested
 owner and recovery count and fail immediately if no pending histories match.
 CI retains worker logs and JSONL audits on failure for seven days and runs all
 matrix jobs to completion so one failure does not hide other backend results.
+
+
+The full runs include eleven interrupt cases. The subsequently added parallel
+interrupt rejection case passed separately on SQLite and PostgreSQL. All twelve
+interrupt cases passed on Python 3.13 with PostgreSQL in 39.62 seconds; the earlier
+eleven-case SQLite run passed on Python 3.13 in 59.37 seconds. The built wheel was
+installed in a fresh environment and imported outside the checkout with both
+get_interrupt and resume available.
