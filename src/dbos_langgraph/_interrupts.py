@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from itertools import count
 from typing import Any, cast
 
+from dbos import DBOS
+from dbos._error import DBOSWorkflowCancelledError
 from langchain_core.runnables import RunnableConfig
 from langchain_core.runnables.config import var_child_runnable_config
 from langgraph._internal._constants import (
@@ -23,8 +25,17 @@ from langgraph._internal._scratchpad import PregelScratchpad
 from langgraph.config import get_config
 from langgraph.types import Interrupt
 
+from ._state import fingerprint
+
 EVENT_KEY = "dbos_langgraph.interrupt"
 RESUME_TOPIC = "dbos_langgraph.resume"
+RECEIVE_TIMEOUT_SECONDS = 1
+
+
+def resume_topic(interrupt_id: str) -> str:
+    return f"{RESUME_TOPIC}.{interrupt_id}"
+
+
 resume_target: ContextVar[tuple[str, list[Any]] | None] = ContextVar(
     "dbos_langgraph_resume_target", default=None
 )
@@ -70,3 +81,31 @@ def interrupt_scope(namespace: str, resumes: list[Any]) -> Iterator[None]:
         yield
     finally:
         var_child_runnable_config.reset(token)
+
+
+async def _check_running() -> None:
+    workflow_id = str(DBOS.workflow_id)
+    status = await DBOS.get_workflow_status_async(workflow_id)
+    if status is None or status.status not in ("PENDING", "ENQUEUED"):
+        raise DBOSWorkflowCancelledError(workflow_id)
+
+
+async def wait_for_resume(interrupt_id: str) -> Any:
+    """Wait durably without retaining a cancelled root for a long receive timeout."""
+    while True:
+        await _check_running()
+        message = await DBOS.recv_async(
+            resume_topic(interrupt_id), timeout_seconds=RECEIVE_TIMEOUT_SECONDS
+        )
+        # Even the correct topic can contain malformed external messages. Ignore
+        # those entries so a subsequent valid approval can still reach the graph.
+        if not isinstance(message, dict) or message.get("interrupt_id") != interrupt_id:
+            continue
+        if "value" not in message:
+            continue
+        try:
+            fingerprint(message["value"], allow_messages=False)
+        except (TypeError, ValueError):
+            continue
+        await _check_running()
+        return message["value"]

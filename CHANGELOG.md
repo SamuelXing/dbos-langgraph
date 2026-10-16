@@ -2,6 +2,12 @@
 
 ## 0.1.0a2 (unreleased)
 
+- Validate pauses before reserving immutable approval delivery histories.
+- Isolate resume messages by interrupt ID and ignore malformed messages.
+- Bound approval receives and stop waiting roots after stored cancellation.
+- Reuse the registered compiled graph with isolated in-memory checkpoint state.
+- Change the opt-in interrupt protocol; earlier pending PR histories require their original code.
+
 - Add opt-in native interrupt/resume for one sequential human approval in a step node.
 - Persist approval delivery through a separate idempotent DBOS control workflow.
 - Recover paused and resumed nodes without repeating committed model/tool results.

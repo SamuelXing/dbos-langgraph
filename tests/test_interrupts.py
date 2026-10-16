@@ -40,11 +40,11 @@ def worker_env(tmp_path):
     }
 
 
-def kill_at_marker(tmp_path, identity, mode, boundary, marker):
+def kill_at_marker(tmp_path, identity, mode, boundary, marker, scenario="normal"):
     log = tmp_path / f"{mode}.log"
     with log.open("w") as stream:
         worker = subprocess.Popen(
-            worker_command(tmp_path, identity, mode, boundary),
+            worker_command(tmp_path, identity, mode, boundary, scenario=scenario),
             env=worker_env(tmp_path),
             stdout=stream,
             stderr=subprocess.STDOUT,
@@ -145,3 +145,25 @@ def test_sync_step_can_interrupt_and_resume(tmp_path):
     assert result["decision"] is True
     assert result["tool_result"] == 42
     assert (tmp_path / "calls").read_text().splitlines().count("approval-entered") == 2
+
+
+@pytest.mark.parametrize("scenario", ["early", "message", "freeze", "isolation"])
+def test_approval_protocol_regressions(tmp_path, scenario):
+    result = finish(tmp_path, "protocol-" + uuid.uuid4().hex, "live", scenario=scenario)
+    assert result["decision"] is True
+    assert result["tool_result"] == 42
+
+
+def test_cancellation_between_validation_and_delivery_cannot_run_tool(tmp_path):
+    result = finish(tmp_path, "cancel-race-" + uuid.uuid4().hex, "live", scenario="cancel-race")
+    assert result == {"cancelled": True}
+    assert "tool" not in (tmp_path / "calls").read_text().splitlines()
+
+
+def test_registered_graph_remains_frozen_after_worker_crash(tmp_path):
+    identity = "frozen-" + uuid.uuid4().hex
+    kill_at_marker(tmp_path, identity, "start", "pause", "paused", scenario="freeze")
+    result = finish(tmp_path, identity, "resume", scenario="freeze")
+    assert result["decision"] is True
+    assert result["tool_result"] == 42
+    assert (tmp_path / "calls").read_text().splitlines().count("model") == 1

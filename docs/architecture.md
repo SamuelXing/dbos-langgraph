@@ -54,8 +54,8 @@ shape and fingerprint. Sync step nodes execute through asyncio.to_thread, which
 also propagates DBOS context; cancellation does not stop the thread itself.
 
 
-Opt-in interrupt execution uses a fresh InMemorySaver per root invocation. It
-retains native task state between the initial invoke and Command resume, then
+Opt-in interrupt execution copies a graph compiled once during registration and
+attaches a fresh InMemorySaver per root invocation. It retains native task state between the initial invoke and Command resume, then
 rebuilds that state from child histories after a process crash. A paused child
 returns a stored interrupt envelope; its outer node wrapper raises GraphInterrupt
 for Pregel. The resumed child receives its approval values as durable input and
@@ -63,7 +63,11 @@ constructs a fresh scratchpad, so independent child recovery needs no live paren
 checkpoint. Pause IDs use the child workflow ID as their namespace. The pinned
 LangGraph scratchpad and task-ID interfaces are internal compatibility boundaries.
 
-The root publishes its pause as a DBOS event and waits on a durable message. A
-separate resume control history validates the target and sends the response. Its
-ID derives from the root and interrupt IDs, giving first-response-wins retries.
+The root publishes its pause as a DBOS event and waits on a durable message.
+Pause validation runs before creating the immutable delivery history, so an early
+rejected attempt does not reserve the approval ID. A separate resume control
+history checks the target status and sends the response to an interrupt-specific
+topic. The delivery history ID derives from the root and interrupt IDs, giving
+first-response-wins retries. Bounded receives check terminal status between waits
+and before continuing.
 Only one sequential pause is supported. See [human approval](interrupts.md).

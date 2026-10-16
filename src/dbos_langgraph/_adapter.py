@@ -22,11 +22,12 @@ from langgraph.types import Command, Interrupt
 from ._config import invocation_config, normalize_config
 from ._interrupts import (
     EVENT_KEY,
-    RESUME_TOPIC,
     PausedNode,
     interrupt_scope,
     node_resume_values,
     resume_target,
+    resume_topic,
+    wait_for_resume,
 )
 from ._policy import StepOptions
 from ._state import fingerprint, prepare_messages
@@ -146,6 +147,16 @@ class DurableGraph:
         request_id = "dbos_langgraph.resume." + fingerprint(
             [self._cancellation_name, workflow_id, interrupt_id]
         )
+        existing = await DBOS.get_workflow_status_async(request_id)
+        if existing is not None:
+            # A delivered approval remains idempotent after the graph completes.
+            # Failed validation never creates this immutable delivery history.
+            handle: WorkflowHandleAsync[Any] = await DBOS.retrieve_workflow_async(request_id)
+            await handle.get_result()
+            return
+        pause = await self.get_interrupt(workflow_id, timeout_seconds=0)
+        if pause is None or pause.id != interrupt_id:
+            raise ValueError("no matching pending interrupt")
         with SetWorkflowID(request_id):
             handle = await DBOS.start_workflow_async(
                 self._resumption, workflow_id, interrupt_id, deepcopy(value)
@@ -483,7 +494,9 @@ class DBOSLangGraphPlugin:
             token = invocation_config.set((snapshot, bool(user_config)))
             try:
                 execution_graph = (
-                    builder.compile(checkpointer=InMemorySaver()) if self._interrupts else graph
+                    graph.copy(update={"checkpointer": InMemorySaver()})
+                    if self._interrupts
+                    else graph
                 )
                 native_config = cast(
                     RunnableConfig, {**user_config, "recursion_limit": recursion_limit}
@@ -513,16 +526,12 @@ class DBOSLangGraphPlugin:
                     if len(tasks) != 1:
                         raise RuntimeError("cannot identify interrupted graph task")
                     await DBOS.set_event_async(EVENT_KEY, {"status": "paused", "interrupt": pause})
-                    message = None
-                    while message is None:
-                        message = await DBOS.recv_async(RESUME_TOPIC, timeout_seconds=86400)
-                    if message["interrupt_id"] != pause.id:
-                        raise ValueError("resume message does not match the pending interrupt")
+                    response = await wait_for_resume(pause.id)
                     await DBOS.set_event_async(EVENT_KEY, {"status": "running"})
-                    resume_token = resume_target.set((tasks[0].id, [message["value"]]))
+                    resume_token = resume_target.set((tasks[0].id, [response]))
                     try:
                         result = await execution_graph.ainvoke(
-                            Command(resume={pause.id: message["value"]}),
+                            Command(resume={pause.id: response}),
                             native_config,
                             context=context,
                         )
@@ -555,14 +564,10 @@ class DBOSLangGraphPlugin:
                 raise ValueError("resume target must be an existing root of this graph")
             if status.status not in ("PENDING", "ENQUEUED"):
                 raise ValueError("resume target is not pending")
-            event = await DBOS.get_event_async(workflow_id, EVENT_KEY, timeout_seconds=0)
-            if not event or event["status"] != "paused" or event["interrupt"].id != interrupt_id:
-                raise ValueError("no matching pending interrupt")
             await DBOS.send_async(
                 workflow_id,
                 {"interrupt_id": interrupt_id, "value": value},
-                RESUME_TOPIC,
-                idempotency_key=f"resume:{workflow_id}:{interrupt_id}",
+                resume_topic(interrupt_id),
             )
 
         resumption = (

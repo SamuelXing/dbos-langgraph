@@ -47,10 +47,13 @@ or its stored status is terminal. It validates that the workflow belongs to this
 graph. Timeout zero checks without waiting. Pause payloads and responses must be
 JSON values; False, None, and empty objects are valid responses.
 
-Call `resume` outside a DBOS workflow. It validates the pending pause and sends a
-durable message through a separate control workflow. Its return acknowledges
+Call `resume` outside a DBOS workflow. It validates the pending pause before
+creating an immutable delivery history, then sends a durable message through a separate control workflow. An attempt
+before pause publication raises ValueError without reserving the delivery ID; it
+can be retried once the pause is visible. Its return acknowledges
 message delivery, not graph completion. Await the graph handle for the result.
-The first response submitted for a workflow/interrupt pair wins. Retrying with a
+The first response admitted to the delivery workflow for a workflow/interrupt
+pair wins. Retrying with a
 different response reuses that first request, including after graph completion.
 An unknown interrupt ID or a first response to a terminal root raises ValueError.
 Applications should authenticate and authorize approval requests at their boundary.
@@ -65,7 +68,8 @@ before the interrupted node finishes; it does not require another approval.
 ## Replay behavior
 
 DBOS stores the interrupted node result, pause event, response message, and resumed
-node inputs. On recovery, Pregel rebuilds state from committed child results. An
+node inputs. On recovery, Pregel rebuilds state from committed child results. The graph is
+compiled once at registration. A copy of that compiled graph with an
 invocation-local InMemorySaver retains native pending-task information while that
 root executes; it is reconstructed after a crash and is never the durable store.
 The pause ID derives from the DBOS child workflow ID. Resume values are explicit
@@ -80,14 +84,25 @@ nodes are reused; external effects still require idempotency.
 Cancellation marks the root terminal and prevents a later first approval from
 running the tool. Interrupt-enabled `start` returns a polling handle so stored
 cancellation is observable while the local task is still waiting for its receive
-timeout. Cancellation does not guarantee immediate task shutdown or external
-cleanup. The usual [cancellation limits](failures.md) still apply.
+timeout. Each message receive is bounded to one second, with terminal-status checks
+between waits and after receiving a response. A waiting root exits after observing
+cancellation rather than retaining graph state for a 24-hour receive. These polls
+add durable operations to history, so long approval waits incur ongoing database
+writes and history growth. Cancellation does not guarantee immediate external
+cleanup. The usual [cancellation limits](failures.md) still apply. Approval delivery and
+cancellation are not one atomic operation: a response can be delivered to a root
+that concurrently becomes terminal. Delivery acknowledgement does not override
+cancellation or guarantee that a tool will run.
 
 ## Compatibility
 
 Graphs without `interrupts=True` retain their existing durable call order. Enable
 this option under a new graph name for new invocations; do not change it on a
-pending history. The implementation uses the pinned LangGraph scratchpad contract,
+pending history. This protocol changes the receive topic and durable call order.
+Pending
+interrupt histories from the initial implementation are not compatible; finish
+or cancel those runs with the code that created them and use a new graph name.
+The implementation uses the pinned LangGraph scratchpad contract,
 which must be revalidated on dependency upgrades.
 
 This facade does not expose Command-based root invocation, durable LangGraph

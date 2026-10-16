@@ -149,7 +149,14 @@ reuses its stored response without another approval.
 
 Live cases preserve False, None, and empty-object responses. Conflicting retries
 and a retry after graph completion reuse the first approval. Stale interrupt IDs
-are rejected. A cancelled pause cannot resume the tool. Sync approval nodes run
+are rejected. A cancelled pause cannot resume the tool. Regression probes hold
+pause publication
+to reject an early request and retry the same interrupt ID successfully, inject
+wrong-topic and malformed messages before approval, and require the actual root
+task to exit within five seconds after cancellation. Another probe cancels the
+root between validation and message delivery and checks that no tool runs.
+Frozen-graph probes mutate builder edges and forbid StateGraph.compile after
+registration, including across a worker crash. Sync approval nodes run
 through the thread bridge. Multiple sequential interrupts, parallel interrupts,
 and workflow-mode interrupts must fail explicitly. The approval example also ran
 with a real console response and temporary SQLite history.
@@ -180,8 +187,8 @@ promise exactly-once external side effects.
 
 | Check | Result |
 | --- | --- |
-| PostgreSQL suite | 105 passed, 309.82 seconds |
-| SQLite suite | 96 passed, 9 PostgreSQL-only cases skipped, 299.58 seconds |
+| PostgreSQL suite | 112 passed, 352.22 seconds |
+| SQLite suite | 103 passed, 9 PostgreSQL-only cases skipped, 356.30 seconds |
 | Ruff lint and formatting | Passed |
 | Strict mypy | Passed |
 | Source distribution and wheel build | Passed |
@@ -211,9 +218,8 @@ CI retains worker logs and JSONL audits on failure for seven days and runs all
 matrix jobs to completion so one failure does not hide other backend results.
 
 
-The full runs include eleven interrupt cases. The subsequently added parallel
-interrupt rejection case passed separately on SQLite and PostgreSQL. All twelve
-interrupt cases passed on Python 3.13 with PostgreSQL in 39.62 seconds; the earlier
-eleven-case SQLite run passed on Python 3.13 in 59.37 seconds. The built wheel was
-installed in a fresh environment and imported outside the checkout with both
-get_interrupt and resume available.
+The full runs include all eighteen interrupt cases. Those cases also passed on
+Python 3.13 with SQLite in 101.66 seconds. The built wheel was installed in a
+fresh environment and imported outside the checkout. The cancellation regression
+checks actual workflow task exit, rather than only observing the stored terminal
+status. Concurrent invocations with opposite approvals retain isolated state.
