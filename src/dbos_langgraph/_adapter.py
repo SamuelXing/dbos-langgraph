@@ -2,19 +2,33 @@
 
 import asyncio
 import inspect
+import math
 import re
 from collections.abc import Awaitable, Callable, Coroutine, Mapping
+from contextlib import nullcontext
 from copy import copy, deepcopy
 from dataclasses import replace
-from typing import Any, Literal, TypedDict, cast
+from typing import Any, Literal, NotRequired, TypedDict, cast
 
-from dbos import DBOS, WorkflowHandleAsync
+from dbos import DBOS, SetWorkflowID, WorkflowHandleAsync
 from langchain_core.runnables import RunnableConfig
 from langgraph._internal._runnable import RunnableCallable
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.errors import GraphInterrupt
 from langgraph.graph import StateGraph
 from langgraph.runtime import Runtime
+from langgraph.types import Command, Interrupt
 
 from ._config import invocation_config, normalize_config
+from ._interrupts import (
+    EVENT_KEY,
+    PausedNode,
+    interrupt_scope,
+    node_resume_values,
+    resume_target,
+    resume_topic,
+    wait_for_resume,
+)
 from ._policy import StepOptions
 from ._state import fingerprint, prepare_messages
 
@@ -25,6 +39,7 @@ ExecutionMode = Literal["step", "workflow"]
 class _NodeResult(TypedDict):
     identity: str
     update: dict[str, Any]
+    interrupts: NotRequired[tuple[Interrupt[Any], ...]]
 
 
 class ReplayMismatchError(RuntimeError):
@@ -39,10 +54,12 @@ class DurableGraph:
         workflow: Callable[..., Coroutine[Any, Any, Any]],
         cancellation: Callable[[str], Coroutine[Any, Any, None]] | None = None,
         cancellation_name: str | None = None,
+        resumption: Callable[[str, str, Any], Coroutine[Any, Any, None]] | None = None,
     ) -> None:
         self.workflow = workflow
         self._cancellation = cancellation
         self._cancellation_name = cancellation_name
+        self._resumption = resumption
 
     async def ainvoke(
         self,
@@ -52,6 +69,11 @@ class DurableGraph:
         recursion_limit: int | None = None,
         context: Any = None,
     ) -> Any:
+        if self._resumption is not None:
+            handle = await self.start(
+                state, config, recursion_limit=recursion_limit, context=context
+            )
+            return await handle.get_result()
         state, limit, options = self._invocation(state, config, recursion_limit, context)
         return await self.workflow(state, limit, **options)
 
@@ -64,7 +86,12 @@ class DurableGraph:
         context: Any = None,
     ) -> Any:
         state, limit, options = self._invocation(state, config, recursion_limit, context)
-        return await DBOS.start_workflow_async(self.workflow, state, limit, **options)
+        handle = await DBOS.start_workflow_async(self.workflow, state, limit, **options)
+        if self._resumption is not None:
+            # A polling handle observes terminal cancellation even while the
+            # in-process workflow task is still waiting for its message timeout.
+            return await DBOS.retrieve_workflow_async(handle.get_workflow_id())
+        return handle
 
     @staticmethod
     def _invocation(
@@ -81,6 +108,60 @@ class DurableGraph:
             fingerprint(context, allow_messages=False)
             options["context"] = deepcopy(context)
         return prepare_messages(state), limit, options
+
+    async def get_interrupt(
+        self, workflow_id: str, *, timeout_seconds: float = 60
+    ) -> Interrupt[Any] | None:
+        """Wait for a pause event; return None if the graph is running or complete."""
+        if self._resumption is None or self._cancellation_name is None:
+            raise ValueError("enable interrupts when registering this graph")
+        if not isinstance(workflow_id, str) or not workflow_id.strip():
+            raise ValueError("workflow ID is required")
+        if (
+            isinstance(timeout_seconds, bool)
+            or not isinstance(timeout_seconds, (int, float))
+            or not math.isfinite(timeout_seconds)
+            or timeout_seconds < 0
+        ):
+            raise ValueError("timeout_seconds must be finite and nonnegative")
+        status = await DBOS.get_workflow_status_async(workflow_id)
+        expected_name = self._cancellation_name.removesuffix(".cancel") + ".graph"
+        if status is None or status.name != expected_name:
+            raise ValueError("interrupt target must be an existing root of this graph")
+        if status.status not in ("PENDING", "ENQUEUED"):
+            return None
+        event = await DBOS.get_event_async(workflow_id, EVENT_KEY, timeout_seconds=timeout_seconds)
+        return event["interrupt"] if event and event["status"] == "paused" else None
+
+    async def resume(self, workflow_id: str, interrupt_id: str, value: Any) -> None:
+        """Deliver one immutable approval; retries for the same pause reuse its first value."""
+        if self._resumption is None or self._cancellation_name is None:
+            raise ValueError("enable interrupts when registering this graph")
+        if DBOS.workflow_id is not None:
+            raise RuntimeError("resume from outside a DBOS workflow")
+        if any(
+            not isinstance(item, str) or not item.strip() for item in (workflow_id, interrupt_id)
+        ):
+            raise ValueError("workflow and interrupt IDs are required")
+        fingerprint(value, allow_messages=False)
+        request_id = "dbos_langgraph.resume." + fingerprint(
+            [self._cancellation_name, workflow_id, interrupt_id]
+        )
+        existing = await DBOS.get_workflow_status_async(request_id)
+        if existing is not None:
+            # A delivered approval remains idempotent after the graph completes.
+            # Failed validation never creates this immutable delivery history.
+            handle: WorkflowHandleAsync[Any] = await DBOS.retrieve_workflow_async(request_id)
+            await handle.get_result()
+            return
+        pause = await self.get_interrupt(workflow_id, timeout_seconds=0)
+        if pause is None or pause.id != interrupt_id:
+            raise ValueError("no matching pending interrupt")
+        with SetWorkflowID(request_id):
+            handle = await DBOS.start_workflow_async(
+                self._resumption, workflow_id, interrupt_id, deepcopy(value)
+            )
+        await handle.get_result()
 
     async def request_cancel(self, workflow_id: str) -> WorkflowHandleAsync[None]:
         """Start an independent durable request to cancel this graph and its children.
@@ -137,9 +218,12 @@ class DurableGraph:
 class DBOSLangGraphPlugin:
     """Register one graph before launch. Each node gets an isolated child history."""
 
-    def __init__(self, name: str) -> None:
+    def __init__(self, name: str, *, interrupts: bool = False) -> None:
         self._validate_name(name)
+        if type(interrupts) is not bool:
+            raise TypeError("interrupts must be a bool")
         self.name = name
+        self._interrupts = interrupts
         self._nodes: set[str] = set()
         self._compiled = False
         self._builder: StateGraph[Any, Any, Any, Any] | None = None
@@ -196,25 +280,45 @@ class DBOSLangGraphPlugin:
         accepts_runtime = any(parameter.name == "runtime" for parameter in extras)
         accepts_config = any(parameter.name == "config" for parameter in extras)
 
-        def identity(state: Any, context: Any, config: Any = None) -> str:
+        def identity(state: Any, context: Any, config: Any = None, resumes: Any = None) -> str:
             inputs = [self.name, name, execute_in, state]
             # Retain the fingerprint format of histories created without context.
             if context is not None:
                 inputs.append({"context": context})
             if config is not None:
                 inputs.append({"config": config})
+            if resumes is not None:
+                inputs.append({"resumes": resumes})
             return fingerprint(inputs)
 
-        async def leaf(state: Any, context: Any = None, config: Any = None) -> dict[str, Any]:
+        async def leaf(
+            state: Any, context: Any = None, config: Any = None, resumes: Any = None
+        ) -> dict[str, Any] | PausedNode:
             kwargs: dict[str, Any] = {}
             if accepts_runtime:
                 kwargs["runtime"] = Runtime(context=deepcopy(context))
             if accepts_config:
                 kwargs["config"] = deepcopy(config)
-            if is_async:
-                result = await cast(Awaitable[dict[str, Any]], function(deepcopy(state), **kwargs))
-            else:
-                result = await asyncio.to_thread(function, deepcopy(state), **kwargs)
+            scope = (
+                interrupt_scope(str(DBOS.workflow_id), resumes or [])
+                if self._interrupts
+                else nullcontext()
+            )
+            with scope:
+                try:
+                    if is_async:
+                        result = await cast(
+                            Awaitable[dict[str, Any]], function(deepcopy(state), **kwargs)
+                        )
+                    else:
+                        result = await asyncio.to_thread(function, deepcopy(state), **kwargs)
+                except GraphInterrupt as exc:
+                    if not self._interrupts or execute_in != "step":
+                        raise NotImplementedError("interrupts require opt-in step nodes") from exc
+                    pauses = cast(tuple[Interrupt[Any], ...], exc.args[0])
+                    for pause in pauses:
+                        fingerprint(pause.value, allow_messages=False)
+                    return PausedNode(pauses)
             if not isinstance(result, dict):
                 raise TypeError("nodes must return dict state updates")
             return cast(dict[str, Any], prepare_messages(result, seed=DBOS.workflow_id))
@@ -233,10 +337,14 @@ class DBOSLangGraphPlugin:
             else leaf
         )
 
-        async def isolated_node(state: Any, context: Any = None, config: Any = None) -> _NodeResult:
-            invocation_identity = identity(state, context, config)
+        async def isolated_node(
+            state: Any, context: Any = None, config: Any = None, resumes: Any = None
+        ) -> _NodeResult:
+            invocation_identity = identity(state, context, config, resumes)
             try:
-                if config is not None:
+                if resumes is not None:
+                    update = await durable_leaf(state, context, config, resumes)
+                elif config is not None:
                     update = await durable_leaf(state, context, config)
                 elif context is not None:
                     update = await durable_leaf(state, context)
@@ -259,6 +367,12 @@ class DBOSLangGraphPlugin:
                             continue
                     cancellation.result()
                 raise
+            if isinstance(update, PausedNode):
+                return {
+                    "identity": invocation_identity,
+                    "update": {},
+                    "interrupts": update.interrupts,
+                }
             return {"identity": invocation_identity, "update": update}
 
         node_workflow = DBOS.workflow(name=f"dbos_langgraph.{self.name}.{name}.workflow")(
@@ -272,8 +386,11 @@ class DBOSLangGraphPlugin:
                 raise RuntimeError("durable nodes require a plugin graph invocation")
             snapshot, configured = invocation
             config = snapshot if accepts_config or configured else None
-            expected = identity(state, context, config)
-            if config is not None:
+            resumes = node_resume_values() if self._interrupts else None
+            expected = identity(state, context, config, resumes)
+            if resumes is not None:
+                envelope = await node_workflow(state, context, config, resumes)
+            elif config is not None:
                 envelope = await node_workflow(state, context, config)
             elif context is not None:
                 envelope = await node_workflow(state, context)
@@ -290,6 +407,8 @@ class DBOSLangGraphPlugin:
                     f"expected {expected}, recovered {envelope['identity']}; "
                     "restore compatible routing and code before recovery"
                 )
+            if "interrupts" in envelope:
+                raise GraphInterrupt(envelope["interrupts"])
             result = envelope["update"]
             self._node_completed(name, state, result)
             return result
@@ -374,13 +493,53 @@ class DBOSLangGraphPlugin:
             }
             token = invocation_config.set((snapshot, bool(user_config)))
             try:
-                result = await graph.ainvoke(
-                    state,
-                    cast(RunnableConfig, {**user_config, "recursion_limit": recursion_limit}),
-                    context=context,
+                execution_graph = (
+                    graph.copy(update={"checkpointer": InMemorySaver()})
+                    if self._interrupts
+                    else graph
                 )
-                if isinstance(result, dict) and "__interrupt__" in result:
-                    raise NotImplementedError("interrupt/resume is not supported")
+                native_config = cast(
+                    RunnableConfig, {**user_config, "recursion_limit": recursion_limit}
+                )
+                if self._interrupts:
+                    native_config["configurable"] = {
+                        **user_config.get("configurable", {}),
+                        "thread_id": DBOS.workflow_id,
+                    }
+                result = await execution_graph.ainvoke(state, native_config, context=context)
+                rounds = 0
+                while isinstance(result, dict) and result.get("__interrupt__"):
+                    if not self._interrupts:
+                        raise NotImplementedError("enable interrupts when registering this graph")
+                    pauses = result["__interrupt__"]
+                    if len(pauses) != 1 or rounds:
+                        raise NotImplementedError(
+                            "only one sequential interrupt per invocation is supported"
+                        )
+                    pause = pauses[0]
+                    checkpoint = await execution_graph.aget_state(native_config)
+                    tasks = [
+                        task
+                        for task in checkpoint.tasks
+                        if any(item.id == pause.id for item in task.interrupts)
+                    ]
+                    if len(tasks) != 1:
+                        raise RuntimeError("cannot identify interrupted graph task")
+                    await DBOS.set_event_async(EVENT_KEY, {"status": "paused", "interrupt": pause})
+                    response = await wait_for_resume(pause.id)
+                    await DBOS.set_event_async(EVENT_KEY, {"status": "running"})
+                    resume_token = resume_target.set((tasks[0].id, [response]))
+                    try:
+                        result = await execution_graph.ainvoke(
+                            Command(resume={pause.id: response}),
+                            native_config,
+                            context=context,
+                        )
+                    finally:
+                        resume_target.reset(resume_token)
+                    rounds += 1
+                if self._interrupts:
+                    await DBOS.set_event_async(EVENT_KEY, {"status": "completed"})
                 return result
             finally:
                 invocation_config.reset(token)
@@ -398,4 +557,22 @@ class DBOSLangGraphPlugin:
         cancellation_name = f"dbos_langgraph.{self.name}.cancel"
         cancellation = DBOS.workflow(name=cancellation_name)(cancel)
         self._compiled = True
-        return DurableGraph(durable, cancellation, cancellation_name)
+
+        async def resume(workflow_id: str, interrupt_id: str, value: Any) -> None:
+            status = await DBOS.get_workflow_status_async(workflow_id)
+            if status is None or status.name != f"dbos_langgraph.{self.name}.graph":
+                raise ValueError("resume target must be an existing root of this graph")
+            if status.status not in ("PENDING", "ENQUEUED"):
+                raise ValueError("resume target is not pending")
+            await DBOS.send_async(
+                workflow_id,
+                {"interrupt_id": interrupt_id, "value": value},
+                resume_topic(interrupt_id),
+            )
+
+        resumption = (
+            DBOS.workflow(name=f"dbos_langgraph.{self.name}.resume")(resume)
+            if self._interrupts
+            else None
+        )
+        return DurableGraph(durable, cancellation, cancellation_name, resumption)

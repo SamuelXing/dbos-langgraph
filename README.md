@@ -31,7 +31,7 @@ pytest -q
 Use `uv sync --extra dev --frozen` for the locked environment. Dependencies are
 pinned to the tested DBOS 3.2.0 and LangGraph 1.2.15 combination. Broader compatibility
 requires recovery tests; it is not assumed. Python 3.12 is locally tested; CI is
-configured for 3.12/3.13 with both SQLite and PostgreSQL, but remote CI has not run.
+configured for 3.12/3.13 with recovery checks on SQLite and PostgreSQL.
 
 ## API
 
@@ -91,8 +91,9 @@ the recursion limit. See [the sync config example](examples/sync_config.py).
 ## Execution contract
 
 Native Pregel retains planning, routing, reducers, and joins. The graph runs in a
-DBOS workflow with no LangGraph checkpointer. Each node invocation runs in an isolated
-child workflow. Default `execute_in="step"` wraps its body in one durable step.
+DBOS workflow. Ordinary invocations use no LangGraph checkpointer; interrupt-enabled
+invocations reconstruct an in-memory checkpointer from DBOS history. Each node
+invocation runs in an isolated child workflow. Default `execute_in="step"` wraps its body in one durable step.
 `execute_in="workflow"` supports explicit DBOS multistep orchestration inside that
 child; all nondeterministic operations must be in steps.
 
@@ -127,10 +128,13 @@ an old body from making external writes. See [recovery operations](docs/recovery
 
 Plain sync/async nodes returning dict updates, with optional config/runtime arguments; native reducers;
 fixed cycles and joins; tested simple Send fan-out; isolated multistep nodes.
-Sync nodes, config/runtime injection, unwrapped nodes, and invalid registration are rejected.
+Unwrapped nodes and invalid registration are rejected.
 This facade is not a drop-in CompiledStateGraph replacement.
 
-HITL, streaming, Functional API, callbacks and Runtime fields other than context, general subgraphs,
+Opt-in human approval supports one sequential interrupt in a step node; see
+[interrupt/resume](docs/interrupts.md) and [the example](examples/human_approval.py).
+
+Streaming, Functional API, callbacks and Runtime fields other than context, general subgraphs,
 dynamic graph changes, full cancellation/retry policy translation, and upgrades are
 not supported or validated. Do not use them under assumptions of durable compatibility.
 Tests use SIGKILL and actual node-body audit counts; probes live only under tests/support.
@@ -139,6 +143,7 @@ Tests use SIGKILL and actual node-body audit counts; probes live only under test
 
 - [Execution model](docs/architecture.md)
 - [Replay and code changes](docs/replay.md)
+- [Human approval](docs/interrupts.md)
 - [Node failures](docs/failures.md)
 - [Recovery operations](docs/recovery-operations.md)
 - [Test coverage](docs/validation.md)
